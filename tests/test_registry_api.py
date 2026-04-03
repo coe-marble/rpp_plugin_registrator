@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 def load_registry_api_module():
@@ -27,21 +28,36 @@ class RegistryApiTests(unittest.TestCase):
         name: str = "test",
     ) -> None:
         payload = {
-            "plugin": {
-                "id": plugin_id,
-                "name": name,
-                "source_language": "python",
-                "class_name": class_name,
-                "rpp_registration": {
-                    "factory": {
-                        "symbol": "create_plugin",
-                        "signature": "void* create_plugin()",
+            "Plugin": {
+                "Id": plugin_id,
+                "Name": name,
+                "SourceLanguage": "python",
+                "ClassName": class_name,
+                "RppRegistration": {
+                    "Factory": {
+                        "CreateSymbol": "create_plugin",
+                        "Signature": "void* create_plugin()",
                     }
                 },
             }
         }
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def _write_python_plugin_source(self, path: Path, class_name: str, tag: str, plugin_name: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            (
+                "from rpp_common.py.RPP_Plugin import RPP_Plugin\n\n"
+                f"class {class_name}(RPP_Plugin):\n"
+                f"    tag = \"{tag}\"\n\n"
+                "    def name(self) -> str:\n"
+                f"        return \"{plugin_name}\"\n\n"
+                "    def execute(self, input: str) -> str:\n"
+                "        return input\n"
+            ),
+            encoding="utf-8",
+        )
 
     def test_resolve_registry_path_prefers_explicit_path(self):
         with tempfile.TemporaryDirectory() as td:
@@ -68,13 +84,88 @@ class RegistryApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             original_home = self.registry_api.RPP_HOME
             self.registry_api.RPP_HOME = Path(td) / ".rpp"
+            common_plugins_dir = Path(td) / "empty_common_plugins"
+            common_plugins_dir.mkdir(parents=True, exist_ok=True)
             try:
-                self.registry_api.ensure_rpp_layout()
+                self.registry_api.ensure_rpp_layout(common_plugins_dir=common_plugins_dir)
                 paths = self.registry_api.get_rpp_paths()
                 self.assertTrue(paths["home"].exists())
                 self.assertTrue(paths["descriptions"].exists())
                 self.assertTrue(paths["interfaces"].exists())
                 self.assertTrue(paths["registry"].parent.exists())
+                self.assertTrue((paths["home"] / self.registry_api.INITIALIZED_MARKER_FILENAME).exists())
+            finally:
+                self.registry_api.RPP_HOME = original_home
+
+    def test_ensure_rpp_layout_raises_when_common_plugins_resolution_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            original_home = self.registry_api.RPP_HOME
+            self.registry_api.RPP_HOME = Path(td) / ".rpp"
+            try:
+                with mock.patch.object(self.registry_api.importlib, "import_module", side_effect=ImportError):
+                    with self.assertRaises(RuntimeError):
+                        self.registry_api.ensure_rpp_layout(common_plugins_dir=None)
+            finally:
+                self.registry_api.RPP_HOME = original_home
+
+    def test_ensure_rpp_layout_initializes_common_plugins_and_writes_marker(self):
+        with tempfile.TemporaryDirectory() as td:
+            temp_root = Path(td)
+            common_plugins_dir = temp_root / "common_plugins"
+            self._write_python_plugin_source(common_plugins_dir / "Controller.py", "Controller", "ctl", "controller")
+            self._write_python_plugin_source(common_plugins_dir / "Estimator.py", "Estimator", "est", "estimator")
+
+            original_home = self.registry_api.RPP_HOME
+            self.registry_api.RPP_HOME = temp_root / ".rpp"
+            try:
+                self.registry_api.ensure_rpp_layout(common_plugins_dir=common_plugins_dir)
+                paths = self.registry_api.get_rpp_paths()
+
+                marker_path = paths["home"] / self.registry_api.INITIALIZED_MARKER_FILENAME
+                self.assertTrue(marker_path.exists())
+                marker_payload = json.loads(marker_path.read_text(encoding="utf-8"))
+                self.assertTrue(marker_payload["Initialized"])
+                self.assertEqual(set(marker_payload["InitializedPlugins"]), {"ctl", "est"})
+
+                registry_payload = self.registry_api.load_registry(registry_path=paths["registry"])
+                self.assertIn("ctl", registry_payload["Plugins"])
+                self.assertIn("est", registry_payload["Plugins"])
+                self.assertTrue((paths["descriptions"] / "ctl.plugin.json").exists())
+                self.assertTrue((paths["descriptions"] / "est.plugin.json").exists())
+
+                self.registry_api.ensure_rpp_layout(common_plugins_dir=common_plugins_dir)
+                registry_payload_second = self.registry_api.load_registry(registry_path=paths["registry"])
+                self.assertEqual(
+                    sorted(registry_payload_second["Plugins"].keys()),
+                    sorted(registry_payload["Plugins"].keys()),
+                )
+            finally:
+                self.registry_api.RPP_HOME = original_home
+
+    def test_ensure_rpp_layout_override_reinitializes_when_marker_exists(self):
+        with tempfile.TemporaryDirectory() as td:
+            temp_root = Path(td)
+            common_plugins_dir = temp_root / "common_plugins"
+            self._write_python_plugin_source(common_plugins_dir / "Controller.py", "Controller", "ctl", "controller")
+
+            original_home = self.registry_api.RPP_HOME
+            self.registry_api.RPP_HOME = temp_root / ".rpp"
+            try:
+                self.registry_api.ensure_rpp_layout(common_plugins_dir=common_plugins_dir)
+                paths = self.registry_api.get_rpp_paths()
+
+                registry_payload = self.registry_api.load_registry(registry_path=paths["registry"])
+                self.assertIn("ctl", registry_payload["Plugins"])
+
+                del registry_payload["Plugins"]["ctl"]
+                self.registry_api.write_json(paths["registry"], registry_payload)
+
+                self.registry_api.ensure_rpp_layout(
+                    common_plugins_dir=common_plugins_dir,
+                    override_initialization=True,
+                )
+                registry_payload_after_override = self.registry_api.load_registry(registry_path=paths["registry"])
+                self.assertIn("ctl", registry_payload_after_override["Plugins"])
             finally:
                 self.registry_api.RPP_HOME = original_home
 
@@ -98,12 +189,12 @@ class RegistryApiTests(unittest.TestCase):
             registry_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": 1,
-                        "system": "rpp",
-                        "plugins": {
-                            "ctl": {"class_name": "Controller"},
-                            "est": {"class_name": "Estimator"},
-                            "other": {"class_name": "Controller"},
+                        "SchemaVersion": 1,
+                        "System": "rpp",
+                        "Plugins": {
+                            "ctl": {"ClassName": "Controller"},
+                            "est": {"ClassName": "Estimator"},
+                            "other": {"ClassName": "Controller"},
                         },
                     }
                 ),
@@ -131,12 +222,12 @@ class RegistryApiTests(unittest.TestCase):
 
             self.registry_api.register_description(description_path, registry_path)
             payload = json.loads(registry_path.read_text(encoding="utf-8"))
-            self.assertIn("echo", payload["plugins"])
+            self.assertIn("echo", payload["Plugins"])
             self.assertEqual(
-                payload["plugins"]["echo"]["description_file"],
+                payload["Plugins"]["echo"]["DescriptionFile"],
                 str(description_path),
             )
-            self.assertEqual(payload["plugins"]["echo"]["class_name"], "EchoPlugin")
+            self.assertEqual(payload["Plugins"]["echo"]["ClassName"], "EchoPlugin")
 
     def test_register_description_rejects_missing_plugin_id(self):
         with tempfile.TemporaryDirectory() as td:
@@ -145,7 +236,7 @@ class RegistryApiTests(unittest.TestCase):
             registry_path = temp_root / "registry" / "rpp_plugins.registry.json"
             description_path.parent.mkdir(parents=True, exist_ok=True)
             description_path.write_text(
-                json.dumps({"plugin": {"name": "broken"}}),
+                json.dumps({"Plugin": {"Name": "broken"}}),
                 encoding="utf-8",
             )
 
@@ -195,8 +286,8 @@ class RegistryApiTests(unittest.TestCase):
             self.assertEqual(registered, [plugin_file.resolve()])
 
             payload = json.loads(registry_path.read_text(encoding="utf-8"))
-            self.assertIn("plugin_only", payload["plugins"])
-            self.assertNotIn("ignored", payload["plugins"])
+            self.assertIn("plugin_only", payload["Plugins"])
+            self.assertNotIn("ignored", payload["Plugins"])
 
     def test_register_descriptions_in_folder_handles_empty_and_invalid_folder(self):
         with tempfile.TemporaryDirectory() as td:
@@ -227,7 +318,7 @@ class RegistryApiTests(unittest.TestCase):
             self.assertFalse(self.registry_api.unregister_plugin("item", registry_path))
 
             listed = self.registry_api.list_registered_plugins(registry_path)
-            self.assertEqual(listed["plugins"], {})
+            self.assertEqual(listed["Plugins"], {})
 
             missing_registry = temp_root / "registry" / "never_created.json"
             missing_list = self.registry_api.list_registered_plugins(missing_registry)

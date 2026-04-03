@@ -32,4 +32,5 @@ def map_type_to_target(source_type: str, target_lang: str) -> str:
 
 
 def plugin_name_to_identifier(plugin: Dict[str, Any]) -> str:
-    return plugin["name"].title().replace("_", "")
+    name = plugin.get("Name", "Plugin")
+    return name.title().replace("_", "")

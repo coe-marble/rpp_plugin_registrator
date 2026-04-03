@@ -6,7 +6,7 @@ from .common import map_type_to_target, plugin_name_to_identifier
 
 
 def generate(description: Dict[str, Any]) -> str:
-    plugin = description["plugin"]
+    plugin = description.get("Plugin", {})
     class_name = f"I{plugin_name_to_identifier(plugin)}Plugin"
     lines = [
         "#pragma once",
@@ -18,12 +18,19 @@ def generate(description: Dict[str, Any]) -> str:
         f"    virtual ~{class_name}() = default;",
     ]
 
-    for method in plugin["interface"]["methods"]:
+    interface = plugin.get("Interface", {})
+    for method in interface.get("Methods", []):
+        params_block = method.get("Params", [])
         params = ", ".join(
-            f"{map_type_to_target(param['type'], 'cpp')} {param['name']}" for param in method["params"]
+            f"{map_type_to_target(param.get('Type', 'any'), 'cpp')} {param.get('Name')}"
+            for param in params_block
         )
-        return_type = map_type_to_target(method["return_type"], "cpp")
-        lines.append(f"    virtual {return_type} {method['name']}({params}) = 0;")
+        return_type = map_type_to_target(
+            method.get("ReturnType", "any"),
+            "cpp",
+        )
+        method_name = method.get("Name", "method")
+        lines.append(f"    virtual {return_type} {method_name}({params}) = 0;")
 
     lines.append("};")
     lines.append("")

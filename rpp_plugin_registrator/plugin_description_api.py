@@ -114,29 +114,29 @@ def build_description(
     methods: List[MethodSpec],
 ) -> Dict[str, Any]:
     return {
-        "schema_version": 1,
-        "plugin": {
-            "id": plugin_id,
-            "name": plugin_name,
-            "source_language": language,
-            "source_file": str(source_file),
-            "class_name": class_name,
-            "param_description": descriptions.get("param_description", []),
-            "log_description": descriptions.get("log_description", []),
-            "input_description": descriptions.get("input_description", []),
-            "output_description": descriptions.get("output_description", []),
-            "rpp_registration": {
-                "factory": {
-                    "create_symbol": create_symbol,
-                    "destroy_symbol": destroy_symbol,
+        "SchemaVersion": 1,
+        "Plugin": {
+            "Id": plugin_id,
+            "Name": plugin_name,
+            "SourceLanguage": language,
+            "SourceFile": str(source_file),
+            "ClassName": class_name,
+            "ParamDescription": descriptions.get("param_description", []),
+            "LogDescription": descriptions.get("log_description", []),
+            "InputDescription": descriptions.get("input_description", []),
+            "OutputDescription": descriptions.get("output_description", []),
+            "RppRegistration": {
+                "Factory": {
+                    "CreateSymbol": create_symbol,
+                    "DestroySymbol": destroy_symbol,
                 }
             },
-            "interface": {
-                "methods": [
+            "Interface": {
+                "Methods": [
                     {
-                        "name": method.name,
-                        "return_type": method.return_type,
-                        "params": [{"name": param.name, "type": param.type} for param in method.params],
+                        "Name": method.name,
+                        "ReturnType": method.return_type,
+                        "Params": [{"Name": param.name, "Type": param.type} for param in method.params],
                     }
                     for method in methods
                 ]
