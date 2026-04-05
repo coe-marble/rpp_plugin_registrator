@@ -6,7 +6,7 @@ By default, metadata is stored in `~/.rpp`:
 
 - `~/.rpp/descriptions` for plugin description JSON files
 - `~/.rpp/interfaces` for generated interfaces
-- `~/.rpp/registry/rpp_plugins.registry.json` for plugin registry
+- `~/.rpp/registry/rpp_plugin_types.registry.json` for plugin registry
 
 ## What It Does
 
@@ -95,7 +95,7 @@ This command:
 
 - infers description from source
 - writes/updates `~/.rpp/descriptions/<plugin_id>.plugin.json`
-- updates `~/.rpp/registry/rpp_plugins.registry.json`
+- updates `~/.rpp/registry/rpp_plugin_types.registry.json`
 
 Register from an existing description JSON file:
 
@@ -123,7 +123,7 @@ python3 rpp_registrator.py add \
 This command:
 
 - creates or updates the plugin description in `~/.rpp/descriptions`
-- registers the plugin in `~/.rpp/registry/rpp_plugins.registry.json`
+- registers the plugin in `~/.rpp/registry/rpp_plugin_types.registry.json`
 - optionally generates interfaces in `~/.rpp/interfaces`
 
 ### 5. Manage Registered Plugins

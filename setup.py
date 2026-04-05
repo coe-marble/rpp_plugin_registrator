@@ -7,5 +7,10 @@ setup(
     description="RPP plugin registrator and interface generator",
     packages=find_packages(),
     include_package_data=True,
-    install_requires=[],
+    install_requires=["PyQt6"],
+    entry_points={
+        "console_scripts": [
+            "rpp-plugin-manager=rpp_plugin_registrator.gui:main",
+        ]
+    },
 )
