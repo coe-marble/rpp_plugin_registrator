@@ -29,6 +29,7 @@ class RegistryApiTests(unittest.TestCase):
         plugin_id: str,
         class_name: str = "TestPlugin",
         name: str = "test",
+        library: str | None = None,
     ) -> None:
         payload = {
             "Plugin": {
@@ -36,6 +37,7 @@ class RegistryApiTests(unittest.TestCase):
                 "Name": name,
                 "SourceLanguage": "python",
                 "ClassName": class_name,
+                "Library": library or self.TEST_LIBRARY,
                 "RppRegistration": {
                     "Factory": {
                         "CreateSymbol": "create_plugin",
@@ -169,15 +171,15 @@ class RegistryApiTests(unittest.TestCase):
             default_path = Path(td) / "default.json"
             explicit = Path(td) / "explicit.json"
             self.assertEqual(
-                registry_api.resolve_output_path(str(explicit), default_path),
+                rp.resolve_output_path(str(explicit), default_path),
                 explicit.resolve(),
             )
             self.assertEqual(
-                registry_api.resolve_output_path(None, default_path),
+                rp.resolve_output_path(None, default_path),
                 default_path.resolve(),
             )
 
-    def test_get_plugin_tags_and_types(self):
+    def test_get_plugin_types(self):
         with tempfile.TemporaryDirectory() as td:
             with self._temp_rpp_home(Path(td) / ".rpp"):
                 registry_path = rp.get_app_registry_path()
@@ -197,125 +199,111 @@ class RegistryApiTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-                tags = registry_api.get_plugin_tags()
                 types = registry_api.get_plugin_types()
                 class_names = [entry["ClassName"] for entry in types.values()]
 
-            self.assertEqual(tags, ["ctl", "est", "other"])
             self.assertEqual(class_names, ["Controller", "Estimator", "Controller"])
 
     def test_register_plugin_type_persists_plugin_metadata(self):
         with tempfile.TemporaryDirectory() as td:
-            temp_root = Path(td)
-            description_path = temp_root / "descriptions" / "echo.plugin.json"
-            registry_path = temp_root / "registry" / "rpp_plugin_types.registry.json"
+            with self._temp_rpp_home(Path(td) / ".rpp"):
+                temp_root = Path(td)
+                source_path = temp_root / "plugins" / "EchoPlugin.py"
+                registry_path = rp.get_app_registry_path()
 
-            self._write_description(
-                path=description_path,
-                plugin_id="echo",
-                class_name="EchoPlugin",
-                name="echo",
-            )
+                self._write_python_plugin_source(
+                    path=source_path,
+                    class_name="EchoPlugin",
+                    tag="echo",
+                    plugin_name="echo",
+                )
 
-            registry_api.register_plugin_type(description_path, registry_path, library=self.TEST_LIBRARY)
-            payload = json.loads(registry_path.read_text(encoding="utf-8"))
-            self.assertIn("echo", payload["PluginTypes"])
-            self.assertEqual(
-                payload["PluginTypes"]["echo"]["DescriptionFile"],
-                str(description_path),
-            )
-            self.assertEqual(payload["PluginTypes"]["echo"]["ClassName"], "EchoPlugin")
+                entry = registry_api.register_plugin_type_from_source(
+                    source_path,
+                    library=self.TEST_LIBRARY,
+                )
+                payload = json.loads(registry_path.read_text(encoding="utf-8"))
+                # Entry should be in the registry
+                self.assertEqual(entry["DescriptionFile"], str(source_path.resolve()))
+                self.assertEqual(entry["ClassName"], "EchoPlugin")
+                # Verify it's persisted in registry under the correct ID
+                plugin_types = payload["PluginTypes"]
+                self.assertTrue(any(pt["ClassName"] == "EchoPlugin" for pt in plugin_types.values()))
 
-    def test_register_plugin_type_rejects_missing_plugin_id(self):
-        with tempfile.TemporaryDirectory() as td:
-            temp_root = Path(td)
-            description_path = temp_root / "descriptions" / "broken.plugin.json"
-            registry_path = temp_root / "registry" / "rpp_plugin_types.registry.json"
-            description_path.parent.mkdir(parents=True, exist_ok=True)
-            description_path.write_text(
-                json.dumps({"Plugin": {"Name": "broken"}}),
-                encoding="utf-8",
-            )
-
-            with self.assertRaises(ValueError):
-                registry_api.register_plugin_type(description_path, registry_path, library=self.TEST_LIBRARY)
-
-    def test_register_plugin_type_rejects_duplicate_plugin_id(self):
+    def test_register_plugin_type_from_source_registers_python_plugin(self):
         with tempfile.TemporaryDirectory() as td:
             with self._temp_rpp_home(Path(td) / ".rpp"):
                 temp_root = Path(td)
+                source_path = temp_root / "plugins" / "EchoPlugin.py"
                 registry_path = rp.get_app_registry_path()
-                first = temp_root / "descriptions" / "first.plugin.json"
-                second = temp_root / "descriptions" / "second.plugin.json"
 
-                self._write_description(first, plugin_id="dup", class_name="FirstClass")
-                self._write_description(second, plugin_id="dup", class_name="SecondClass")
+                self._write_python_plugin_source(
+                    path=source_path,
+                    class_name="EchoPlugin",
+                    tag="echo",
+                    plugin_name="echo",
+                )
 
-                registry_api.register_plugin_type(first, registry_path, library=self.TEST_LIBRARY)
-                with self.assertRaises(ValueError):
-                    registry_api.register_plugin_type(second, registry_path, library=self.TEST_LIBRARY)
+                entry = registry_api.register_plugin_type_from_source(
+                    source_path,
+                    library=self.TEST_LIBRARY,
+                )
+
+                self.assertEqual(entry["DescriptionFile"], str(source_path.resolve()))
+                self.assertEqual(entry["Library"], self.TEST_LIBRARY)
+                self.assertEqual(entry["ClassName"], "EchoPlugin")
+                payload = json.loads(registry_path.read_text(encoding="utf-8"))
+                # Verify entry is in registry
+                plugin_types = payload["PluginTypes"]
+                self.assertTrue(any(pt["ClassName"] == "EchoPlugin" for pt in plugin_types.values()))
 
     def test_register_plugin_type_rejects_duplicate_class_name(self):
         with tempfile.TemporaryDirectory() as td:
             with self._temp_rpp_home(Path(td) / ".rpp"):
                 temp_root = Path(td)
                 registry_path = rp.get_app_registry_path()
-                first = temp_root / "descriptions" / "first.plugin.json"
-                second = temp_root / "descriptions" / "second.plugin.json"
+                first_source = temp_root / "plugins" / "FirstPlugin.py"
+                second_source = temp_root / "plugins" / "SecondPlugin.py"
 
-                self._write_description(first, plugin_id="one", class_name="SharedClass")
-                self._write_description(second, plugin_id="two", class_name="SharedClass")
+                self._write_python_plugin_source(
+                    first_source,
+                    class_name="SharedClass",
+                    tag="first_tag",
+                    plugin_name="first",
+                )
+                self._write_python_plugin_source(
+                    second_source,
+                    class_name="SharedClass",
+                    tag="second_tag",
+                    plugin_name="second",
+                )
 
-                registry_api.register_plugin_type(first, registry_path, library=self.TEST_LIBRARY)
+                # First plugin should register successfully
+                registry_api.register_plugin_type_from_source(first_source, library=self.TEST_LIBRARY)
+
+                # Second plugin with same class name should fail
                 with self.assertRaises(ValueError):
-                    registry_api.register_plugin_type(second, registry_path, library=self.TEST_LIBRARY)
+                    registry_api.register_plugin_type_from_source(second_source, library=self.TEST_LIBRARY)
 
-    def test_register_plugin_types_in_folder_uses_plugin_extension_first(self):
-        with tempfile.TemporaryDirectory() as td:
-            temp_root = Path(td)
-            folder = temp_root / "descriptions"
-            registry_path = temp_root / "registry" / "rpp_plugin_types.registry.json"
-
-            plugin_file = folder / "plugin_only.plugin.json"
-            plain_json = folder / "ignored.json"
-            self._write_description(plugin_file, plugin_id="plugin_only", class_name="PluginOnly")
-            self._write_description(plain_json, plugin_id="ignored", class_name="Ignored")
-
-            registered = registry_api.register_plugin_types_in_folder(folder, registry_path, library=self.TEST_LIBRARY)
-            self.assertEqual(registered, [plugin_file.resolve()])
-
-            payload = json.loads(registry_path.read_text(encoding="utf-8"))
-            self.assertIn("plugin_only", payload["PluginTypes"])
-            self.assertNotIn("ignored", payload["PluginTypes"])
-
-    def test_register_plugin_types_in_folder_handles_empty_and_invalid_folder(self):
-        with tempfile.TemporaryDirectory() as td:
-            temp_root = Path(td)
-            empty_folder = temp_root / "empty"
-            empty_folder.mkdir(parents=True, exist_ok=True)
-            registry_path = temp_root / "registry" / "rpp_plugin_types.registry.json"
-
-            self.assertEqual(
-                registry_api.register_plugin_types_in_folder(empty_folder, registry_path, library=self.TEST_LIBRARY),
-                [],
-            )
-
-            missing_folder = temp_root / "missing"
-            with self.assertRaises(ValueError):
-                registry_api.register_plugin_types_in_folder(missing_folder, registry_path, library=self.TEST_LIBRARY)
 
     def test_unregister_plugin_type_and_list_registered_plugin_types(self):
         with tempfile.TemporaryDirectory() as td:
             with self._temp_rpp_home(Path(td) / ".rpp"):
                 temp_root = Path(td)
                 registry_path = rp.get_app_registry_path()
-                description_path = temp_root / "descriptions" / "item.plugin.json"
-                self._write_description(description_path, plugin_id="item", class_name="ItemPlugin")
-                registry_api.register_plugin_type(description_path, registry_path, library=self.TEST_LIBRARY)
+                source_path = temp_root / "plugins" / "ItemPlugin.py"
+                self._write_python_plugin_source(
+                    source_path,
+                    class_name="ItemPlugin",
+                    tag="item",
+                    plugin_name="item",
+                )
+                registry_api.register_plugin_type_from_source(source_path, library=self.TEST_LIBRARY)
 
                 self.assertFalse(registry_api.unregister_plugin_type("missing", registry_path, library=self.TEST_LIBRARY))
-                self.assertTrue(registry_api.unregister_plugin_type("item", registry_path, library=self.TEST_LIBRARY))
-                self.assertFalse(registry_api.unregister_plugin_type("item", registry_path, library=self.TEST_LIBRARY))
+                # ID is derived from library_classname in snake_case: testlib_item_plugin
+                self.assertTrue(registry_api.unregister_plugin_type("testlib_item_plugin", registry_path, library=self.TEST_LIBRARY))
+                self.assertFalse(registry_api.unregister_plugin_type("testlib_item_plugin", registry_path, library=self.TEST_LIBRARY))
 
                 listed = registry_api.list_registered_plugin_types(registry_path)
                 self.assertEqual(listed["PluginTypes"], {})

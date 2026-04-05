@@ -151,34 +151,30 @@ def build_description(
         "Plugin": plugin_obj,
     }
 
-def apply_library_context(description: Dict[str, Any], library: str) -> Dict[str, Any]:
-    """Apply library context to a plugin description.
+def apply_library_context(plugin_info: Dict[str, Any], library: str) -> Dict[str, Any]:
+    """Apply library context to a plugin info dictionary.
 
     Updates:
-    - Id: <library>_<original_id> (lowercase)
-    - Tag: <library>::<Name> (library lowercase, Name in PascalCase)
+    - Id: <library>_<plugin_name> (lowercase)
+    - PluginType: <library>::<ClassName>
     - Library: name of the library
 
     Args:
-        description: Plugin description dictionary
+        plugin_info: Plugin metadata dictionary
         library: Library name/identifier
 
     Returns:
-        Updated description with library context
+        Updated plugin_info with library context
     """
-    plugin = description.get("Plugin", {})
     library_lower = library.lower()
-    plugin_name = plugin.get("Name", "")
-    plugin_class_name = plugin.get("ClassName", "")
+    plugin_class_name = plugin_info["ClassName"]
 
-    # Generate new ID and tag
-    new_id = f"{library_lower}_{to_snake_case(plugin_name or '')}".lower()
-    name_part = to_pascal_case(plugin_name or '')
-    new_plugin_type = f"{library_lower}::{plugin_class_name}"
+    # Generate new ID and plugin type
+    id_source = plugin_class_name
+    new_id = f"{library_lower}_{to_snake_case(id_source)}".lower()
 
-    # Update plugin object
-    plugin["Id"] = new_id
-    plugin["PluginType"] = new_plugin_type
-    plugin["Library"] = library_lower
+    plugin_info["Id"] = new_id
+    plugin_info["Library"] = library_lower
+    plugin_info["PluginName"] = f"{library}::{plugin_class_name}"
 
-    return description
+    return plugin_info

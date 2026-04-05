@@ -66,10 +66,10 @@ class RegistryBackendTests(unittest.TestCase):
             plugin_source = temp_root / "hello_plugin.py"
             plugin_source.write_text(
                 """
-from rpp_common import RPP_Plugin
+from rpp_common.common_plugins import Controller
 
 
-class HelloPlugin(RPP_Plugin):
+class HelloPlugin(Controller):
     tag = "hello"
 
     def name(self) -> str:
@@ -88,10 +88,14 @@ class HelloPlugin(RPP_Plugin):
             plugins = manager.get_available_plugins()
             self.assertIn("TestLib", plugins)
             plugin_items = [item for group in plugins["TestLib"].values() for item in group]
-            hello_item = next((item for item in plugin_items if item.get("T") == "HelloPlugin"), None)
+            hello_item = next((item for item in plugin_items if item.get("ClassName") == "HelloPlugin"), None)
             self.assertIsNotNone(hello_item)
             self.assertEqual(hello_item["Name"], "HelloPlugin")
-            self.assertEqual(hello_item["T"], "HelloPlugin")
+            self.assertEqual(hello_item["ClassName"], "HelloPlugin")
+            self.assertEqual(hello_item["PluginType"], "rpp::Controller")
+            self.assertEqual(hello_item["Library"], "testlib")
+            self.assertEqual(hello_item["FullyQualifiedClassName"], "<class 'hello_plugin.HelloPlugin'>")
+            self.assertEqual(hello_item["PluginName"], "TestLib::HelloPlugin")
 
             libraries = manager.list_component_libraries()
             self.assertTrue(any(lib["Name"] == "TestLib" for lib in libraries))
@@ -106,19 +110,21 @@ class HelloPlugin(RPP_Plugin):
             plugin_type_dir = library_root / "plugin_types"
             plugin_type_dir.mkdir(parents=True, exist_ok=True)
 
-            descriptor_path = plugin_type_dir / "Control.plugin.json"
-            descriptor_path.write_text(
-                json.dumps(
-                    {
-                        "Plugin": {
-                            "Id": "ctl_custom",
-                            "Tag": "ctl_custom",
-                            "Name": "Control",
-                            "SourceLanguage": "python",
-                            "ClassName": "ControlType",
-                            "Library": "TestLib",
-                        }
-                    }
+            plugin_type_path = plugin_type_dir / "ControlType.py"
+            plugin_type_path.write_text(
+                "\n".join(
+                    [
+                        "from rpp_common import RPP_Plugin",
+                        "",
+                        "",
+                        "class ControlType(RPP_Plugin):",
+                        "    def name(self):",
+                        "        return \"Control\"",
+                        "",
+                        "    def execute(self):",
+                        "        return None",
+                        "",
+                    ]
                 ),
                 encoding="utf-8",
             )
@@ -128,7 +134,7 @@ class HelloPlugin(RPP_Plugin):
             plugins_payload["PluginTypes"] = [
                 {
                     "Name": "Control",
-                    "Path": "plugin_types/Control.plugin.json",
+                    "Path": "plugin_types/ControlType.py",
                     "Type": "file",
                 }
             ]
@@ -140,12 +146,12 @@ class HelloPlugin(RPP_Plugin):
             manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
             self.assertIn("PluginTypes", manifest_payload)
-            self.assertIn("ctl_custom", manifest_payload["PluginTypes"])
+            self.assertIn("testlib::ControlType", manifest_payload["PluginTypes"])
             self.assertEqual(
-                manifest_payload["PluginTypes"]["ctl_custom"]["DescriptionFile"],
-                str(descriptor_path.resolve()),
+                manifest_payload["PluginTypes"]["testlib::ControlType"]["DescriptionFile"],
+                str(plugin_type_path.resolve()),
             )
-            self.assertEqual(manifest_payload["PluginTypes"]["ctl_custom"]["Library"], "TestLib")
+            self.assertEqual(manifest_payload["PluginTypes"]["testlib::ControlType"]["Library"], "testlib")
 
 
 

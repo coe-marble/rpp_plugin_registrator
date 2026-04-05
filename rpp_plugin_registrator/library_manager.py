@@ -3,15 +3,22 @@ from __future__ import annotations
 import json
 import json5
 import os
+import re
 import shutil
 import warnings
 from pathlib import Path
 
-from rpp_plugin_registrator import plugin_type_registrator as r_api
+from matplotlib.pylab import f
+from numpy import full
+from sympy import li
+
+from rpp_plugin_registrator import plugin_type_registrator as ptyp_reg_api
+from rpp_plugin_registrator import plugin_registrator as p_reg_api
+from rpp_plugin_registrator.plugin_descriptors.core import apply_library_context
 from rpp_plugin_registrator.utils import to_pascal_case
 import rpp_plugin_registrator.registry_paths as rp
 from rpp_plugin_registrator.plugin_descriptors import parse_plugin_file
-from rpp_plugin_registrator.plugin_validators import validate_plugin_instance
+from rpp_plugin_registrator.plugin_validators import validate_plugin
 from rpp_plugin_registrator.utils import import_module_from_path, load_json5, write_json
 from rpp_plugin_registrator.library_constants import (
     LIBRARY_MANIFEST_FILENAME,
@@ -65,9 +72,36 @@ class LibraryManager:
     def _plugins_path(library_path):
         return os.path.join(library_path, LIBRARY_PLUGINS_FILENAME)
 
+    def ensure_library_structure(self, lib_path, lib_name):
+
+        autogen_folder = os.path.join(lib_path, 'autogen')
+        if not os.path.exists(autogen_folder):
+            os.makedirs(autogen_folder)
+
+        src_folder = os.path.join(lib_path, 'src')
+        if not os.path.exists(src_folder):
+            os.makedirs(src_folder)
+
+        lib_folder = os.path.join(lib_path, lib_name)
+        if not os.path.exists(lib_folder):
+            os.makedirs(lib_folder)
+
+        if not os.path.exists(self._plugins_path(lib_path)):
+            plugins_txt = _PLUGINS_TEMPLATE.replace('{{library_name}}', lib_name)
+            with open(self._plugins_path(lib_path), 'w') as f:
+                f.write(plugins_txt)
+
+        if not os.path.exists(self._package_path(lib_path)):
+            lib_meta = build_library_package(lib_name)
+            write_json(Path(self._package_path(lib_path)), lib_meta, indent=4, sort_keys=False)
+
+        if not os.path.exists(self._manifest_path(lib_path)):
+            manifest = build_library_manifest(lib_name)
+            write_json(Path(self._manifest_path(lib_path)), manifest, indent=4, sort_keys=False)
+
     def _ensure_layout(self):
         """Ensure required directory structure exists."""
-        r_api.ensure_rpp_layout()
+        ptyp_reg_api.ensure_rpp_layout()
 
     def start(self):
         """Start the library manager and ensure layout."""
@@ -173,27 +207,30 @@ class LibraryManager:
         ext = os.path.splitext(component_file)[1].lower()
         return ext in supported_extensions
 
-    def get_plugin_info_from_file(self, component_file, plugin_name=None):
+    def get_plugin_info_from_file(self, component_file):
         """Get plugin information from a component file."""
         desc = parse_plugin_file(component_file)
         desc = desc["Plugin"]
 
-        plugin_name = plugin_name if plugin_name else desc["ClassName"]
-        plugin_types = r_api.get_plugin_types()
-        validation = validate_plugin_instance(Path(component_file), plugin_name, plugin_types)
-        if not validation.get("is_valid", False):
-            error_message = validation.get("error") or "Unknown plugin validation error"
+        class_name = desc["ClassName"]
+        plugin_types = ptyp_reg_api.get_plugin_types()
+        validation = validate_plugin(Path(component_file), class_name, plugin_types)
+        if not validation.get("IsValid", False):
+            error_message = validation.get("Error") or "Unknown plugin validation error"
             raise ValueError(error_message)
-        validation_data = validation.get("data", {})
+        validation_data = validation.get("Data", {})
 
-        T = validation_data.get("plugin_type")
-        has_params = bool(desc.get("param_description"))
-        description = desc.get("description", "No description provided.")
-        is_casadi = bool(desc.get("is_casadi", False))
+        has_params = bool(desc.get("ParameterDescription"))
+        description = desc.get("Description", "No description provided.")
+        is_casadi = bool(desc.get("IsCasadi", False))
 
         plugin_info = build_plugin_info_payload(
-            name=plugin_name,
-            plugin_tag=T,
+            name=class_name,
+            class_name=desc.get("ClassName"),
+            plugin_type=validation_data["PluginType"],
+            plugin_class_name=validation_data["PluginClassName"],
+            fully_qualified_class_name=validation_data["FullyQualifiedClassName"],
+            fully_qualified_plugin_class_name=validation_data["FullyQualifiedPluginClassName"],
             component_path=str(component_file),
             source_language=desc.get("SourceLanguage", "unknown"),
             has_parameters=has_params,
@@ -204,20 +241,16 @@ class LibraryManager:
         return plugin_info
 
 
-    def get_plugin_class(self, plugin_path: str, plugin_name: str | None = None):
+    def get_plugin_class(self, plugin_path: str):
         """Get the plugin class from a plugin file."""
         if not os.path.exists(plugin_path):
             raise ValueError(f"Plugin path '{plugin_path}' does not exist.")
 
         file_stem = os.path.splitext(os.path.basename(plugin_path))[0]
-        target_name = plugin_name if plugin_name else to_pascal_case(file_stem)
+        target_name = to_pascal_case(file_stem)
         plugin_module = import_module_from_path(plugin_path)
         if hasattr(plugin_module, target_name):
             return getattr(plugin_module, target_name)
-
-        # Backward compatibility for legacy plugin files.
-        if not plugin_name and hasattr(plugin_module, file_stem):
-            return getattr(plugin_module, file_stem)
 
         raise ValueError(f"Plugin class '{target_name}' was not found in '{plugin_path}'.")
 
@@ -283,46 +316,20 @@ class LibraryManager:
         if not self.is_valid_component_library(path):
             raise ValueError(f"Library '{lib_name}' is not a valid library")
 
-        info = load_json5(Path(self._package_path(path)))
         plugins = load_json5(Path(self._plugins_path(path)))
 
-        manifest = build_library_manifest(info['Library'], version=info['Version'])
 
-        for plugin in plugins.get(LIBRARY_PLUGINS_KEY, []):
-            comp_path = os.path.join(path, plugin['Path'])
-            if not os.path.isfile(comp_path):
-                warnings.warn(f"Component file '{comp_path}' not found. Skipping.")
-                continue
-            if not self.is_supported_component_file(comp_path):
-                warnings.warn(f"Component file '{comp_path}' is not a supported component file. Skipping.")
-                continue
-            comp_info = self.get_plugin_info_from_file(comp_path)
-            comp_type = comp_info.get('T', 'unknown')
-            if comp_type not in manifest[LIBRARY_PLUGINS_KEY]:
-                manifest[LIBRARY_PLUGINS_KEY][comp_type] = []
-            manifest[LIBRARY_PLUGINS_KEY][comp_type].append(comp_info)
+        for plugin_type_path in self._iter_registration_files(path, plugins.get(LIBRARY_PLUGIN_TYPES_KEY, []), "Plugin type"):
+            info = ptyp_reg_api.register_plugin_type_from_source(plugin_type_path, lib_name)
+            self.add_to_manifest(lib_name, plugin_type=info)
 
-        for plugin_type_path in self._iter_plugin_type_description_files(path, plugins.get(LIBRARY_PLUGIN_TYPES_KEY, [])):
+        for comp_path in self._iter_registration_files(path, plugins.get(LIBRARY_PLUGINS_KEY, []), "Plugin"):
             try:
-                with open(plugin_type_path, 'r') as f:
-                    description = json5.load(f)
+                comp_info = self.get_plugin_info_from_file(comp_path)
             except Exception as e:
-                warnings.warn(f"Failed to parse plugin type description '{plugin_type_path}': {e}")
+                warnings.warn(f"Failed to get plugin info from '{comp_path}': {e}")
                 continue
-
-            plugin = description.get('Plugin', {})
-            plugin_type_id = plugin.get('Id') or plugin.get('Tag') or Path(plugin_type_path).stem
-            manifest[LIBRARY_PLUGIN_TYPES_KEY][plugin_type_id] = build_manifest_plugin_type_entry(
-                description_file=str(Path(plugin_type_path).resolve()),
-                name=plugin.get('Name'),
-                source_language=plugin.get('SourceLanguage'),
-                class_name=plugin.get('ClassName'),
-                plugin_type=plugin.get('PluginType'),
-                library=info['Library'],
-            )
-
-        manifest_file = self._manifest_path(path)
-        write_json(Path(manifest_file), manifest, indent=4, sort_keys=False)
+            self.register_component(comp_info, lib_name, append_to_json=False, append_to_manifest=True)
 
     def register_component_library(self, path, link_register=False, ask_dialog=True):
         """Register a component library."""
@@ -350,7 +357,7 @@ class LibraryManager:
         autogen_path = lib_path / 'autogen'
         if autogen_path.exists():
             shutil.rmtree(autogen_path)
-        os.makedirs(autogen_path)
+        self.ensure_library_structure(lib_path, lib_path.name)
 
         try:
             self.refresh_component_library(lib_path.name)
@@ -394,24 +401,8 @@ class LibraryManager:
         if not os.path.exists(path):
             os.makedirs(path)
 
-        autogen_folder = os.path.join(path, 'autogen')
-        if not os.path.exists(autogen_folder):
-            os.makedirs(autogen_folder)
 
-        os.makedirs(os.path.join(path, 'src'), exist_ok=True)
-        os.makedirs(os.path.join(path, lib_name), exist_ok=True)
-
-        lib_meta = build_library_package(lib_name)
-
-        manifest = build_library_manifest(lib_name)
-
-        plugins_txt = _PLUGINS_TEMPLATE.replace('{{library_name}}', lib_name)
-        with open(self._plugins_path(path), 'w') as f:
-            f.write(plugins_txt)
-
-        write_json(Path(self._manifest_path(path)), manifest, indent=4, sort_keys=False)
-
-        write_json(Path(self._package_path(path)), lib_meta, indent=4, sort_keys=False)
+        self.ensure_library_structure(path, lib_name)
 
         handle = {}
         handle['path'] = path
@@ -423,13 +414,20 @@ class LibraryManager:
         return handle
 
     # Component Registration Methods
-    def register_component_from_file(self, component_file, lib_name, plugin_name=None):
+    def register_component_from_file(self, component_file, lib_name):
         """Register a component from a file."""
-        info = self.get_plugin_info_from_file(component_file, plugin_name)
+        info = self.get_plugin_info_from_file(component_file)
         self.register_component(info, lib_name)
         return True
 
     def register_component(self, info, lib_name, append_to_json=True, append_to_manifest=True):
+
+        info = apply_library_context(info, lib_name)
+        ok = p_reg_api.register_plugin(info)
+
+        if not ok:
+            raise ValueError(f"Failed to register component '{info['Name']}' in library '{lib_name}'")
+
         """Register a component in a library."""
         lib_path = self.get_library_path(lib_name)
         if not self.is_valid_component_library(lib_path):
@@ -457,23 +455,23 @@ class LibraryManager:
             write_json(Path(plugins_file), plugins_data, indent=4, sort_keys=False)
 
         if append_to_manifest:
-            manifest_file = self._manifest_path(lib_path)
-            manifest_data = load_json5(Path(manifest_file))
+            self.add_to_manifest(lib_name, plugin=info)
 
-            comp_type = info.get('T', 'unknown')
-            plugins_registry = manifest_data.setdefault(LIBRARY_PLUGINS_KEY, {})
-            if comp_type not in plugins_registry:
-                plugins_registry[comp_type] = []
+    def add_to_manifest(self, lib_name, plugin=None, plugin_type=None):
+        lib_path = self.get_library_path(lib_name)
+        manifest_file = self._manifest_path(lib_path)
+        manifest_data = load_json5(Path(manifest_file))
 
-            for comp in plugins_registry[comp_type]:
-                if comp['Name'] == info['Name']:
-                    warnings.warn(f"Component '{info['Name']}' already exists in library '{lib_name}'. Overwriting.")
-                    plugins_registry[comp_type].remove(comp)
-                    break
+        if plugin is not None:
+            plugin_name = plugin.get('PluginName')
+            manifest_data.setdefault(LIBRARY_PLUGINS_KEY, {})
+            manifest_data[LIBRARY_PLUGINS_KEY][plugin_name] = plugin
+        if plugin_type is not None:
+            comp_type = plugin_type.get('PluginType')
+            manifest_data.setdefault(LIBRARY_PLUGIN_TYPES_KEY, {})
+            manifest_data[LIBRARY_PLUGIN_TYPES_KEY][comp_type] = plugin_type
 
-            plugins_registry[comp_type].append(info)
-
-            write_json(Path(manifest_file), manifest_data, indent=4, sort_keys=False)
+        write_json(Path(manifest_file), manifest_data, indent=4, sort_keys=False)
 
     def unregister_component(self, component_name, lib_name):
         """Unregister a component from a library."""
@@ -532,7 +530,7 @@ class LibraryManager:
             raise e
 
         lib_path = os.path.dirname(plugin_desc_path)
-        registry = {z: [] for z in r_api.get_plugin_tags()}
+        registry = {z: [] for z in ptyp_reg_api.get_plugin_types_ids()}
         for p in pd.get('Plugins', []):
             if p['Type'] == 'folder_scan':
                 scan_folder = os.path.join(lib_path, p['Path'])
@@ -564,7 +562,7 @@ class LibraryManager:
     def detect_components_from_path(self, path, registry=None):
         """Detect components from a directory path."""
         if registry is None:
-            registry = {z: [] for z in r_api.get_plugin_tags()}
+            registry = {z: [] for z in ptyp_reg_api.get_plugin_types_ids()}
         for root, dirs, files in os.walk(path):
             for file in files:
                 comp_path = os.path.join(root, file)
@@ -574,14 +572,19 @@ class LibraryManager:
     def detect_component(self, component_file, registry=None):
         """Detect a component from a file."""
         if registry is None:
-            registry = {z: [] for z in r_api.get_plugin_tags()}
+            registry = {z: [] for z in ptyp_reg_api.get_plugin_types_ids()}
         if not os.path.isfile(component_file):
             raise FileNotFoundError(f"Component file '{component_file}' not found.")
         if not self.is_supported_component_file(component_file):
             warnings.warn(f"Component file '{component_file}' is not a supported component file. Skipping.")
             return registry
-        comp_info = self.get_plugin_info_from_file(component_file)
-        comp_type = comp_info.get('T', 'unknown')
+
+        try:
+            comp_info = self.get_plugin_info_from_file(component_file)
+        except Exception as e:
+            warnings.warn(f"Failed to get plugin info from '{component_file}': {e}")
+            return registry
+        comp_type = comp_info.get('PluginType')
         if comp_type not in registry:
             registry[comp_type] = []
         registry[comp_type].append(comp_info)
@@ -609,7 +612,7 @@ class LibraryManager:
             return entries
         return []
 
-    def _iter_plugin_type_description_files(self, base_path, entries):
+    def _iter_registration_files(self, base_path, entries, entry_label):
         for entry in self._normalize_registration_entries(entries):
             entry_type = entry.get('Type', 'file')
             entry_path = entry.get('Path')
@@ -619,19 +622,20 @@ class LibraryManager:
             if entry_type == 'folder_scan':
                 scan_folder = Path(base_path) / entry_path
                 if not scan_folder.is_dir():
-                    warnings.warn(f"Plugin type folder '{scan_folder}' does not exist. Skipping...")
+                    warnings.warn(f"{entry_label} folder '{scan_folder}' does not exist. Skipping...")
                     continue
 
-                description_files = sorted(scan_folder.glob('*.plugin.json'))
-                if not description_files:
-                    description_files = sorted(scan_folder.glob('*.json'))
+                description_files = sorted(scan_folder.rglob('*.py'))
 
                 for description_file in description_files:
                     yield description_file
             else:
                 description_file = Path(base_path) / entry_path
                 if not description_file.is_file():
-                    warnings.warn(f"Plugin type description '{description_file}' not found. Skipping...")
+                    warnings.warn(f"{entry_label} source '{description_file}' not found. Skipping...")
+                    continue
+                if description_file.suffix.lower() != '.py':
+                    warnings.warn(f"{entry_label} source '{description_file}' is not a Python file. Skipping...")
                     continue
                 yield description_file
 
@@ -645,7 +649,7 @@ _PLUGINS_TEMPLATE = """
         // specify the type of each to either 'folder_scan' or 'file'
     ],
     "PluginTypes": [
-        // list your plugin type descriptors here as json objects
+        // list your plugin type implementations (.py) here as json objects
         // specify the type of each to either 'folder_scan' or 'file'
     ]
 }

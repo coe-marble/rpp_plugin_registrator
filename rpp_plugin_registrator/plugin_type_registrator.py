@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from rpp_plugin_registrator.plugin_descriptors.core import apply_library_context
+from rpp_plugin_registrator.plugin_validators import validate_plugin_type
 
 from . import registry_paths as rp
 from .utils import load_json, write_json
@@ -16,10 +17,12 @@ from .library_constants import (
     LIBRARY_PLUGINS_KEY,
 )
 from .payload_builders import (
+    build_library_component_entry,
     build_initialization_payload,
     build_library_manifest,
     build_library_plugin_entry,
     build_library_package,
+    build_registry_entry,
     build_registry_payload,
 )
 
@@ -69,36 +72,6 @@ def _resolve_common_plugins_dir(common_plugins_dir: Optional[Path]) -> Path:
     return resolved_path
 
 
-def _build_registry_entry(description: Dict[str, Any], description_path: Path) -> Dict[str, Any]:
-    plugin = description.get("Plugin", {})
-    registration = plugin.get("RppRegistration", {})
-    factory = registration.get("Factory", {})
-    entry = {
-        "DescriptionFile": str(description_path),
-        "Name": plugin.get("Name"),
-        "SourceLanguage": plugin.get("SourceLanguage"),
-        "ClassName": plugin.get("ClassName"),
-        "PluginType": plugin.get("PluginType") or plugin.get("ClassName"),
-        "Factory": factory,
-    }
-
-    library = plugin.get("Library")
-    if library:
-        entry["Library"] = library
-    return entry
-
-
-def _build_library_component_entry(description: Dict[str, Any], source_file: Path, library_name: str) -> Dict[str, Any]:
-    plugin = description.get("Plugin", {})
-    return {
-        "Name": plugin.get("Name") or plugin.get("ClassName") or source_file.stem,
-        "Path": str(source_file.resolve()),
-        "Type": "file",
-        "Library": library_name,
-        "Version": "0.0.1",
-    }
-
-
 def _ensure_default_library(paths: Dict[str, Path], library_name: str) -> Path:
     library_path = paths["libraries"] / library_name
     library_path.mkdir(parents=True, exist_ok=True)
@@ -146,26 +119,25 @@ def _initialize_common_plugins(paths: Dict[str, Path], common_plugins_dir: Optio
             continue
 
         description = parse_python_plugin(source_file.resolve(), plugin_id=None)
-        description = apply_library_context(description, "rpp")
-        plugin = description.get("Plugin", {})
+        plugin = description["Plugin"]
+        class_name = plugin.get("ClassName")
+        plugin["PluginType"] = f"rpp::{class_name}"
+        plugin["FullyQualifiedClassName"] = f"<class 'rpp_common.common_plugins.{source_file.stem}.{class_name}'>" if class_name else None
+        plugin = apply_library_context(plugin, "rpp")
         plugin_id = plugin.get("Id")
 
-        class_name = plugin.get("ClassName")
         try:
             validate_unique_class_name(class_name, plugin_id, plugins)
         except ValueError:
             continue
 
 
-        plugin["FullyQualifiedBaseClassName"] = f"<class 'rpp_common.common_plugins.{source_file.stem}.{class_name}'>" if class_name else None
-
         description_path = paths["descriptions"] / f"{plugin_id}.plugin.json"
         write_json(description_path, description)
-        registry_entry = _build_registry_entry(description, description_path)
-        registry_entry["Library"] = default_library_name
-        registry_entry["FullyQualifiedBaseClassName"] = plugin["FullyQualifiedBaseClassName"]
+        registry_entry = build_registry_entry(description, description_path)
+        registry_entry["FullyQualifiedClassName"] = plugin["FullyQualifiedClassName"]
         plugins[plugin_id] = registry_entry
-        library_entry = _build_library_component_entry(description, source_file, default_library_name)
+        library_entry = build_library_component_entry(description, source_file, default_library_name)
         library_plugin_types_entries.append(
             build_library_plugin_entry(
                 name=plugin.get("Name") or plugin.get("ClassName") or plugin_id,
@@ -178,11 +150,10 @@ def _initialize_common_plugins(paths: Dict[str, Path], common_plugins_dir: Optio
             "Name": plugin.get("Name"),
             "SourceLanguage": plugin.get("SourceLanguage"),
             "ClassName": plugin.get("ClassName"),
-            "PluginType": plugin.get("PluginType") or plugin.get("ClassName"),
-            "FullyQualifiedBaseClassName": plugin.get("FullyQualifiedBaseClassName"),
+            "PluginType": plugin.get("PluginType"),
+            "FullyQualifiedClassName": plugin.get("FullyQualifiedClassName"),
             "Factory": plugin.get("RppRegistration", {}).get("Factory", {}),
             "Library": default_library_name,
-            "Tag": plugin.get("Tag"),
         }
         library_registry.setdefault(plugin.get("ClassName") or plugin.get("PluginType") or source_file.stem, []).append(
             library_entry
@@ -227,13 +198,9 @@ def ensure_rpp_layout(
     write_json(init_marker_path, init_payload)
 
 
-def resolve_output_path(path_text: Optional[str], default_path: Path) -> Path:
-    return rp.resolve_output_path(path_text, default_path)
-
-
-def get_plugin_tags() -> List[str]:
+def get_plugin_types_ids() -> List[str]:
     registry = load_registry()
-    return sorted(registry.get(LIBRARY_PLUGIN_TYPES_KEY, {}).keys())
+    return list(registry.get(LIBRARY_PLUGIN_TYPES_KEY, {}).keys())
 
 
 def get_plugin_types() -> List[str]:
@@ -243,7 +210,7 @@ def get_plugin_types() -> List[str]:
 
 def validate_unique_plugin_id(requested_id: str, plugins: Dict[str, Any]) -> None:
     if requested_id in plugins:
-        raise ValueError(f"Plugin type id/tag '{requested_id}' is already registered.")
+        raise ValueError(f"Plugin type id '{requested_id}' is already registered.")
 
 
 def validate_unique_class_name(class_name: Optional[str], plugin_id: str, plugins: Dict[str, Any]) -> None:
@@ -258,54 +225,51 @@ def validate_unique_class_name(class_name: Optional[str], plugin_id: str, plugin
             )
 
 
-def register_plugin_type(description_path: Path, registry_path: Path, library: str) -> None:
-    description = load_json(description_path)
+def register_plugin_type(
+    description: Dict[str, Any],
+) -> str:
     plugin = description.get("Plugin", {})
     requested_plugin_id = plugin.get("Id")
     if not requested_plugin_id:
-        raise ValueError(f"Description '{description_path}' does not include plugin.id")
+        raise ValueError("Description does not include Plugin.Id")
+
+    library = plugin.get("Library")
+    if not library:
+        raise ValueError("Description does not include Plugin.Library")
 
     registry = load_registry()
-    plugins = registry.setdefault("PluginTypes", {})
+    plugins = registry.setdefault(LIBRARY_PLUGIN_TYPES_KEY, {})
     validate_unique_plugin_id(requested_plugin_id, plugins)
     validate_unique_class_name(plugin.get("ClassName"), requested_plugin_id, plugins)
 
-    registration = plugin.get("RppRegistration", {})
-    factory = registration.get("Factory", {})
+    description_file = plugin.get("DescriptionFile")
+    if not description_file:
+        raise ValueError("Description does not include Plugin.DescriptionFile")
 
-    entry = {
-        "DescriptionFile": str(description_path),
-        "Name": plugin.get("Name"),
-        "SourceLanguage": plugin.get("SourceLanguage"),
-        "ClassName": plugin.get("ClassName"),
-        "PluginType": plugin.get("PluginType") or plugin.get("ClassName"),
-        "Factory": factory,
-        "Library": library,
-    }
+    validation_result = validate_plugin_type(description_file, plugin["ClassName"])
+    if not validation_result["IsValid"]:
+        raise ValueError(f"Plugin validation failed: {validation_result.get('Error')}")
 
-    if "Tag" in plugin:
-        entry["Tag"] = plugin.get("Tag")
+    description["Plugin"]["FullyQualifiedClassName"] = \
+        validation_result["Data"].get("FullyQualifiedClassName")
+    description["Plugin"]["PluginType"] = f"{library}::{description['Plugin']['ClassName']}"
+    entry = build_registry_entry(description, Path(str(description_file)))
 
     plugins[requested_plugin_id] = entry
-    write_json(registry_path, registry)
+    write_json(rp.get_app_registry_path(), registry)
+    return entry
 
 
-def register_plugin_types_in_folder(folder_path: Path, registry_path: Path, library: str) -> List[Path]:
-    if not folder_path.exists() or not folder_path.is_dir():
-        raise ValueError(f"Description folder does not exist or is not a directory: '{folder_path}'")
+def register_plugin_type_from_source(source_file: Path, library: str) -> str:
+    from rpp_plugin_registrator.plugin_descriptors import parse_plugin_file
 
-    description_files = sorted(folder_path.glob("*.plugin.json"))
-    if not description_files:
-        description_files = sorted(folder_path.glob("*.json"))
+    source_path = Path(source_file).expanduser().resolve()
+    description = parse_plugin_file(source_path)
+    plugin = description.setdefault("Plugin", {})
+    apply_library_context(plugin, library)
+    description.setdefault("Plugin", {})["DescriptionFile"] = str(source_path)
 
-    if not description_files:
-        return []
-
-    registered: List[Path] = []
-    for description_path in description_files:
-        register_plugin_type(description_path.resolve(), registry_path, library=library)
-        registered.append(description_path.resolve())
-    return registered
+    return register_plugin_type(description)
 
 
 def unregister_plugin_type(plugin_id: str, registry_path: Path, library: str) -> bool:
@@ -316,7 +280,7 @@ def unregister_plugin_type(plugin_id: str, registry_path: Path, library: str) ->
     plugin_types = registry.get(LIBRARY_PLUGIN_TYPES_KEY, {})
     if plugin_id not in plugin_types:
         return False
-    
+
     # Enforce library match.
     entry = plugin_types.get(plugin_id, {})
     if entry.get("Library") != library:
@@ -334,13 +298,13 @@ def list_registered_plugin_types(registry_path: Path) -> Dict[str, Any]:
 
 
 __all__ = [
-    "get_plugin_tags",
+    "get_plugin_types_ids",
     "get_plugin_types",
     "load_registry",
     "ensure_rpp_layout",
     "resolve_output_path",
     "register_plugin_type",
-    "register_plugin_types_in_folder",
+    "register_plugin_type_from_source",
     "unregister_plugin_type",
     "list_registered_plugin_types",
 ]

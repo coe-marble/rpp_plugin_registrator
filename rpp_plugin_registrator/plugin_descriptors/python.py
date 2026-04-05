@@ -94,7 +94,7 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> Dict[str
                     plugin_name = stmt.value.value
                     break
 
-    resolved_name = plugin_name or plugin_class.name
+    resolved_name = plugin_name
 
     has_create = any(isinstance(node, ast.FunctionDef) and node.name == "create_plugin" for node in tree.body)
     has_destroy = any(isinstance(node, ast.FunctionDef) and node.name == "destroy_plugin" for node in tree.body)

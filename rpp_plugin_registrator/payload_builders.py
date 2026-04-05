@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List
 from uuid import uuid4
 
@@ -54,16 +55,25 @@ def build_initialization_payload(schema_version: int | str, initialized_plugins:
 
 def build_plugin_info_payload(
     name: str,
-    plugin_tag: str,
+    class_name: str,
+    plugin_type: str,
+    plugin_class_name: str,
+    fully_qualified_class_name: str,
+    fully_qualified_plugin_class_name: str,
     component_path: str,
     source_language: str = "unknown",
     has_parameters: bool = False,
     description: str = "No description provided.",
     is_casadi: bool = False,
+
 ) -> Dict[str, Any]:
     return {
         "Name": name,
-        "T": plugin_tag,
+        "ClassName": class_name,
+        "PluginType": plugin_type,
+        "PluginClassName": plugin_class_name,
+        "FullyQualifiedClassName": fully_qualified_class_name,
+        "FullyQualifiedPluginClassName": fully_qualified_plugin_class_name,
         "HasParameters": has_parameters,
         "Description": description,
         "IsCasadi": is_casadi,
@@ -93,6 +103,35 @@ def build_manifest_plugin_type_entry(
         "Name": name,
         "SourceLanguage": source_language,
         "ClassName": class_name,
-        "PluginType": plugin_type or class_name,
+        "PluginType": plugin_type,
         "Library": library,
+    }
+
+
+def build_registry_entry(description: Dict[str, Any], description_path: Path) -> Dict[str, Any]:
+    plugin = description.get("Plugin", {})
+    registration = plugin.get("RppRegistration", {})
+    factory = registration.get("Factory", {})
+    entry = {
+        "DescriptionFile": str(description_path),
+        "SourceLanguage": plugin.get("SourceLanguage"),
+        "ClassName": plugin.get("ClassName"),
+        "PluginType": plugin.get("PluginType"),
+        "Factory": factory,
+        "Library": plugin.get("Library"),
+        "FullyQualifiedClassName": plugin.get("FullyQualifiedClassName"),
+    }
+
+    return entry
+
+
+def build_library_component_entry(description: Dict[str, Any], source_file: Path, library_name: str) -> Dict[str, Any]:
+    plugin = description.get("Plugin", {})
+    return {
+        "Name": plugin.get("Name") or plugin.get("ClassName") or source_file.stem,
+        "Path": str(source_file.resolve()),
+        "Type": "file",
+        "Library": library_name,
+        "Version": "0.0.1",
+        "FullyQualifiedClassName": plugin.get("FullyQualifiedClassName"),
     }
