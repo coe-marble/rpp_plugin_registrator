@@ -100,6 +100,53 @@ class HelloPlugin(Controller):
             libraries = manager.list_component_libraries()
             self.assertTrue(any(lib["Name"] == "TestLib" for lib in libraries))
 
+    def test_register_component_from_python_file_falls_back_to_source_metadata(self):
+        with tempfile.TemporaryDirectory() as td:
+            temp_root = Path(td)
+            manager = LibraryManager(rpp_home=temp_root / ".rpp")
+            manager.get_or_create_component_library("TestLib")
+
+            plugin_source = temp_root / "fallback_plugin.py"
+            plugin_source.write_text(
+                """
+from rpp_common.common_plugins import Controller
+
+
+class FallbackPlugin(Controller):
+    def name(self) -> str:
+        return "fallback"
+
+    def execute(self, input: str) -> str:
+        return input
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch("rpp_plugin_registrator.library_manager.validate_plugin") as validate_plugin:
+                validate_plugin.return_value = {
+                    "IsValid": True,
+                    "Error": None,
+                    "Data": {
+                        "PluginType": "rpp::Controller",
+                        "PluginClassName": "Controller",
+                    },
+                }
+
+                result = manager.register_component_from_file(plugin_source, "TestLib")
+
+            self.assertTrue(result)
+
+            plugins = manager.get_available_plugins()
+            plugin_items = [item for group in plugins["TestLib"].values() for item in group]
+            fallback_item = next((item for item in plugin_items if item.get("ClassName") == "FallbackPlugin"), None)
+            self.assertIsNotNone(fallback_item)
+            self.assertEqual(fallback_item["FullyQualifiedClassName"], "<class 'fallback_plugin.FallbackPlugin'>")
+            self.assertEqual(
+                fallback_item["FullyQualifiedPluginClassName"],
+                "<class 'rpp_common.common_plugins.Controller.Controller'>",
+            )
+
     def test_refresh_component_library_includes_custom_plugin_types_in_manifest(self):
         with tempfile.TemporaryDirectory() as td:
             temp_root = Path(td)

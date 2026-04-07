@@ -3,14 +3,9 @@ from __future__ import annotations
 import json
 import json5
 import os
-import re
 import shutil
 import warnings
 from pathlib import Path
-
-from matplotlib.pylab import f
-from numpy import full
-from sympy import li
 
 from rpp_plugin_registrator import plugin_type_registrator as ptyp_reg_api
 from rpp_plugin_registrator import plugin_registrator as p_reg_api
@@ -213,6 +208,7 @@ class LibraryManager:
         desc = desc["Plugin"]
 
         class_name = desc["ClassName"]
+        base_class_name = desc.get("BaseClassName")
         plugin_types = ptyp_reg_api.get_plugin_types()
         validation = validate_plugin(Path(component_file), class_name, plugin_types)
         if not validation.get("IsValid", False):
@@ -220,17 +216,32 @@ class LibraryManager:
             raise ValueError(error_message)
         validation_data = validation.get("Data", {})
 
+        plugin_module = import_module_from_path(str(component_file))
+        plugin_class = getattr(plugin_module, class_name, None)
+        if plugin_class is None:
+            raise ValueError(f"Plugin class '{class_name}' was not found in '{component_file}'.")
+
         has_params = bool(desc.get("ParameterDescription"))
         description = desc.get("Description", "No description provided.")
         is_casadi = bool(desc.get("IsCasadi", False))
 
+        plugin_class_name = validation_data.get("PluginClassName") or base_class_name
+        plugin_type = validation_data.get("PluginType")
+        if plugin_type is None and plugin_class_name:
+            plugin_type = f"rpp::{plugin_class_name}"
+
+        fully_qualified_class_name = validation_data.get("FullyQualifiedClassName") or str(plugin_class)
+        fully_qualified_plugin_class_name = validation_data.get("FullyQualifiedPluginClassName")
+        if fully_qualified_plugin_class_name is None and plugin_class_name:
+            fully_qualified_plugin_class_name = f"<class 'rpp_common.common_plugins.{plugin_class_name}.{plugin_class_name}'>"
+
         plugin_info = build_plugin_info_payload(
             name=class_name,
             class_name=desc.get("ClassName"),
-            plugin_type=validation_data["PluginType"],
-            plugin_class_name=validation_data["PluginClassName"],
-            fully_qualified_class_name=validation_data["FullyQualifiedClassName"],
-            fully_qualified_plugin_class_name=validation_data["FullyQualifiedPluginClassName"],
+            plugin_type=plugin_type,
+            plugin_class_name=plugin_class_name,
+            fully_qualified_class_name=fully_qualified_class_name,
+            fully_qualified_plugin_class_name=fully_qualified_plugin_class_name,
             component_path=str(component_file),
             source_language=desc.get("SourceLanguage", "unknown"),
             has_parameters=has_params,
