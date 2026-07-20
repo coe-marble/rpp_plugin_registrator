@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>829</width>
+    <width>905</width>
     <height>619</height>
    </rect>
   </property>
@@ -147,7 +147,10 @@
          <number>0</number>
         </property>
         <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_5" stretch="10,15">
+         <layout class="QHBoxLayout" name="horizontalLayout_5" stretch="40,14">
+          <property name="spacing">
+           <number>2</number>
+          </property>
           <property name="leftMargin">
            <number>0</number>
           </property>
@@ -164,7 +167,7 @@
              </widget>
             </item>
             <item>
-             <widget class="QListWidget" name="pluginTypesList"/>
+             <widget class="QTreeWidget" name="pluginTypesTreeView"/>
             </item>
            </layout>
           </item>

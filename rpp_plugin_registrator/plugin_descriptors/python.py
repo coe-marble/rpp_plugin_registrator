@@ -4,20 +4,18 @@ import ast
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from numpy import full
-
 from .core import (
-    MethodParam,
-    MethodSpec,
-    annotation_to_text,
-    build_description,
-    extract_plugin_descriptions,
-    extract_plugin_tag,
+    MethodInfo,
+    FieldInfo,
+    ParsePluginData,
+    ParsePluginResult,
+    annotation_to_type_info,
+    build_plugin_description,
     read_text,
 )
 
 
-def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> Dict[str, Any]:
+def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> ParsePluginResult:
     text = read_text(source_file)
     tree = ast.parse(text, filename=str(source_file))
 
@@ -31,16 +29,20 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> Dict[str
             return base.attr
         return None
 
-    def _class_has_plugin_markers(node: ast.ClassDef) -> bool:
-        if extract_plugin_tag(node):
-            return True
-        for item in node.body:
-            if isinstance(item, ast.FunctionDef) and item.name in {"name", "execute", "step"}:
-                return True
-        return False
-
     fallback_candidate: Optional[ast.ClassDef] = None
     fallback_base_names: List[str] = []
+
+    imported_plugin_types = set()
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom):
+            if node.module and node.module.startswith("rpp_plugin_types"):
+                for alias in node.names:
+                    imported_plugin_types.add(alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("rpp_plugin_types"):
+                    imported_plugin_types.add(alias.name.split(".")[-1])
+
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             base_names = [name for name in (_base_name(base) for base in node.bases) if name]
@@ -48,9 +50,11 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> Dict[str
                 plugin_class = node
                 plugin_base_names = base_names
                 break
-            if fallback_candidate is None and _class_has_plugin_markers(node):
-                fallback_candidate = node
-                fallback_base_names = base_names
+            if any(base_name in imported_plugin_types for base_name in base_names):
+                plugin_class = node
+                plugin_base_names = base_names
+                break
+
 
     if plugin_class is None:
         has_single_class = len([node for node in tree.body if isinstance(node, ast.ClassDef)]) == 1
@@ -65,8 +69,7 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> Dict[str
     if plugin_class is None:
         raise ValueError(f"Could not locate a plugin class in '{source_file}'.")
 
-    descriptions = extract_plugin_descriptions(plugin_class)
-    methods: List[MethodSpec] = []
+    methods: List[Dict[str, Any]] = []
     plugin_name: Optional[str] = None
 
     is_casadi = False
@@ -81,12 +84,19 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> Dict[str
                 is_casadi = True
             continue
 
-        params: List[MethodParam] = []
+        params: List[Dict[str, Any]] = []
         for arg in item.args.args:
             if arg.arg != "self":
-                params.append(MethodParam(name=arg.arg, type=annotation_to_text(arg.annotation)))
+                typ = annotation_to_type_info(arg.annotation)
+                params.append(FieldInfo(name=arg.arg, type=typ))
 
-        methods.append(MethodSpec(name=item.name, return_type=annotation_to_text(item.returns), params=params))
+        return_type = annotation_to_type_info(item.returns) if item.returns else None
+
+        methods.append(MethodInfo(
+            name=item.name,
+            params=params,
+            results=[FieldInfo(name="return", type=return_type)] if return_type else []
+        ))
 
         if item.name == "name":
             for stmt in item.body:
@@ -96,18 +106,23 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> Dict[str
 
     resolved_name = plugin_name
 
-    has_create = any(isinstance(node, ast.FunctionDef) and node.name == "create_plugin" for node in tree.body)
-    has_destroy = any(isinstance(node, ast.FunctionDef) and node.name == "destroy_plugin" for node in tree.body)
-
-    return build_description(
+    desc = build_plugin_description(
         plugin_name=resolved_name,
         language="python",
         source_file=source_file,
         class_name=plugin_class.name,
         base_class_name=plugin_base_names[0] if plugin_base_names else None,
-        descriptions=descriptions,
-        create_symbol="create_plugin" if has_create else "create_plugin",
-        destroy_symbol="destroy_plugin" if has_destroy else "destroy_plugin",
         methods=methods,
         is_casadi=is_casadi,
+    )
+
+    return ParsePluginResult(
+        is_valid=True,
+        message="Successfully parsed Python plugin.",
+        data=ParsePluginData(
+            source_file=str(source_file),
+            source_language="python",
+            plugins=[desc],
+            parse_errors=[],
+        ),
     )

@@ -15,8 +15,9 @@ def to_pascal_case(text: str) -> str:
 
 def to_snake_case(name: str) -> str:
     import re
-    name = re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
-    return name.replace('-', '_').replace(':', '_')
+    name = name.replace('-', '_').replace(':', '_')
+    name = re.sub(r'(?<!^)(?<!_)(?=[A-Z])', '_', name).lower()
+    return name
 
 def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))

@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from uuid import uuid4
 
 from .library_constants import LIBRARY_PLUGIN_TYPES_KEY, LIBRARY_PLUGINS_KEY
+from .plugin_descriptors.core import PluginTypeMetadata, InterfaceInfo
 
 
 def build_library_manifest(
@@ -55,83 +56,78 @@ def build_initialization_payload(schema_version: int | str, initialized_plugins:
 
 def build_plugin_info_payload(
     name: str,
-    class_name: str,
-    plugin_type: str,
-    plugin_class_name: str,
-    fully_qualified_class_name: str,
-    fully_qualified_plugin_class_name: str,
-    component_path: str,
+    plugin_name: str,
+    library: str,
     source_language: str = "unknown",
-    has_parameters: bool = False,
+    plugin_path: str = "",
     description: str = "No description provided.",
     is_casadi: bool = False,
 
 ) -> Dict[str, Any]:
     return {
         "Name": name,
-        "ClassName": class_name,
-        "PluginType": plugin_type,
-        "PluginClassName": plugin_class_name,
-        "FullyQualifiedClassName": fully_qualified_class_name,
-        "FullyQualifiedPluginClassName": fully_qualified_plugin_class_name,
-        "HasParameters": has_parameters,
+        "PluginName": plugin_name,
+        "Library": library,
         "Description": description,
+        "PluginPath": plugin_path,
         "IsCasadi": is_casadi,
-        "ComponentPath": component_path,
-        "Type": source_language,
+        "SourceLanguage": source_language,
     }
 
 
-def build_library_plugin_entry(name: str, path: str, entry_type: str = "file") -> Dict[str, Any]:
+def build_plugin_type_info_payload(
+    plugin_desc: PluginTypeMetadata,
+    interface_desc: InterfaceInfo,
+    source_file: Path,
+) -> Dict[str, Any]:
     return {
-        "Name": name,
-        "Path": path,
-        "Type": entry_type,
+        "Name": plugin_desc.plugin_name,
+        "SourceFile": str(source_file.resolve()),
+        "ClassName": plugin_desc.interface_name,
+        "SourceLanguage": plugin_desc.type,
+        "Methods": [method.as_dict() for method in interface_desc.methods],
     }
 
 
-def build_manifest_plugin_type_entry(
-    description_file: str,
-    name: str | None,
-    source_language: str | None,
-    class_name: str | None,
-    plugin_type: str | None,
+
+def build_library_manifest_plugin_type_entry(
+    plugin: Dict[str, Any],
+    description_path: Path,
     library: str,
 ) -> Dict[str, Any]:
     return {
-        "DescriptionFile": description_file,
-        "Name": name,
-        "SourceLanguage": source_language,
-        "ClassName": class_name,
-        "PluginType": plugin_type,
+        "Id": plugin.get("Id"),
+        "Name": plugin.get("Name"),
+        "DescriptionFile": str(description_path.resolve()),
+        "SourceLanguage": plugin.get("SourceLanguage"),
+        "ClassName": plugin.get("ClassName"),
+        "PluginTypeName": plugin.get("PluginTypeName"),
+        "FullyQualifiedClassName": plugin.get("FullyQualifiedClassName"),
+        "Factory": plugin.get("RppRegistration", {}).get("Factory", {}),
         "Library": library,
     }
 
 
-def build_registry_entry(description: Dict[str, Any], description_path: Path) -> Dict[str, Any]:
-    plugin = description.get("Plugin", {})
-    registration = plugin.get("RppRegistration", {})
+
+def build_registry_plugin_type_entry(info: Dict[str, Any]) -> Dict[str, Any]:
+    registration = info.get("RppRegistration", {})
     factory = registration.get("Factory", {})
     entry = {
-        "DescriptionFile": str(description_path),
-        "SourceLanguage": plugin.get("SourceLanguage"),
-        "ClassName": plugin.get("ClassName"),
-        "PluginType": plugin.get("PluginType"),
+        "Id": info.get("Id"),
+        "Name": info.get("Name"),
+        "SourceFile": info.get("SourceFile"),
+        "ClassName": info.get("ClassName"),
+        "PluginTypeName": info.get("PluginTypeName"),
         "Factory": factory,
-        "Library": plugin.get("Library"),
-        "FullyQualifiedClassName": plugin.get("FullyQualifiedClassName"),
+        "Library": info.get("Library"),
+        "FullyQualifiedClassName": info.get("FullyQualifiedClassName"),
     }
 
     return entry
 
-
-def build_library_component_entry(description: Dict[str, Any], source_file: Path, library_name: str) -> Dict[str, Any]:
-    plugin = description.get("Plugin", {})
+def build_library_plugin_file_plugin_type_entry(name: str, path: str, entry_type: str = "file") -> Dict[str, Any]:
     return {
-        "Name": plugin.get("Name") or plugin.get("ClassName") or source_file.stem,
-        "Path": str(source_file.resolve()),
-        "Type": "file",
-        "Library": library_name,
-        "Version": "0.0.1",
-        "FullyQualifiedClassName": plugin.get("FullyQualifiedClassName"),
+        "Name": name,
+        "Path": path,
+        "Type": entry_type,
     }
