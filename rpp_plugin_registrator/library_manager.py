@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import json
 from typing import Union
+import xml
 import json5
 import os, sys
 import shutil
 import warnings
 from pathlib import Path
 from dataclasses import dataclass
-import rpp_plugin_registrator.registry_paths as rp
+import rpp_plugin_registrator.registry_config as rp
 from rpp_plugin_registrator import plugin_type_registrator as ptyp_reg_api
 from rpp_plugin_registrator import plugin_registrator as p_reg_api
-from rpp_plugin_registrator.plugin_descriptors.core import PluginInfo, apply_library_context_to_plugin
+from rpp_plugin_registrator.plugin_descriptors.core import PluginInfo, PluginTypeInfo, apply_library_context_to_plugin
 from rpp_plugin_registrator.utils import to_pascal_case
 from rpp_plugin_registrator.plugin_descriptors import parse_plugin_file
 from rpp_plugin_registrator.plugin_descriptors import plugin_id_from_name as plugin_id_from_name_util
@@ -22,7 +23,7 @@ from rpp_plugin_registrator.supported_plugins_and_types import (
     get_supported_plugin_extensions
 )
 
-from rpp_plugin_registrator.library_constants import (
+from rpp_plugin_registrator.registry_config import (
     LIBRARY_MANIFEST_FILENAME,
     LIBRARY_PACKAGE_FILENAME,
     LIBRARY_PLUGINS_FILENAME,
@@ -31,6 +32,8 @@ from rpp_plugin_registrator.library_constants import (
 )
 from rpp_plugin_registrator.payload_builders import (
     build_library_manifest,
+    build_library_manifest_plugin_entry,
+    build_library_manifest_plugin_type_entry,
     build_library_package,
     build_library_plugin_file_plugin_type_entry,
     build_plugin_info_payload,
@@ -46,14 +49,13 @@ class LibraryManager:
     """Manages plugin libraries, plugins and plugin types in the RPP environment."""
 
     rpp_home = None
-    registry_path = None
+    file_text_encoding = 'utf-8'
 
     def __init__(self, rpp_home: Path | None = None, source_libraries : bool = True, init_anot_only: bool = False):
         self.rpp_home = Path(rpp_home).expanduser().resolve() if rpp_home is not None else rp.RPP_HOME
         rp.RPP_HOME = self.rpp_home
 
-
-        self.registry_path = rp.get_app_registry_plugin_types_json_path()
+        rp.load_and_set_config(self)
         self._ensure_layout(init_anot_only=init_anot_only)
         if source_libraries:
             self._source_registered_libraries()
@@ -67,6 +69,10 @@ class LibraryManager:
         return False
 
     @staticmethod
+    def _manifest_path(library_name):
+        return rp.get_app_library_manifest_path_json(library_name)
+
+    @staticmethod
     def _manifest_plugins(manifest_data):
         return manifest_data.get(LIBRARY_PLUGINS_KEY, {})
 
@@ -75,12 +81,12 @@ class LibraryManager:
         return manifest_data.get(LIBRARY_PLUGIN_TYPES_KEY, {})
 
     @staticmethod
-    def _manifest_path(library_path):
-        return os.path.join(library_path, 'autogen', LIBRARY_MANIFEST_FILENAME)
-
-    @staticmethod
     def _package_path(library_path):
         return os.path.join(library_path, LIBRARY_PACKAGE_FILENAME)
+
+    @staticmethod
+    def _package_xml_path(library_path):
+        return os.path.join(library_path, LIBRARY_PACKAGE_FILENAME.replace('.json', '.xml'))
 
     @staticmethod
     def _plugins_path(library_path):
@@ -90,6 +96,10 @@ class LibraryManager:
     def _lib_name_from_path(library_path):
         return Path(library_path).name
 
+
+    def _package_file_exists(self, library_path):
+        return os.path.isfile(self._package_path(library_path)) \
+            or os.path.isfile(self._package_xml_path(library_path))
 
     def _source_registered_libraries(self):
         library_autogen_path = rp.get_app_interfaces_path()
@@ -111,19 +121,15 @@ class LibraryManager:
 
     def get_type_of_plugin(self, plugin_name):
         """Get the plugin type of a registered plugin."""
-        lib_name, plugin_name_in_lib = self.parse_plugin_name(plugin_name)
+        lib_name, _ = self.parse_plugin_name(plugin_name)
         lib_path = self.get_library_path(lib_name)
         if lib_path is None:
             raise ValueError(f"Library '{lib_name}' does not exist.")
-        manifest_file = self._manifest_path(lib_path)
+        manifest_file = self._manifest_path(lib_name)
         if not os.path.isfile(manifest_file):
             raise ValueError(f"Library at '{lib_path}' does not contain a valid {LIBRARY_MANIFEST_FILENAME} file")
 
     def ensure_library_structure(self, lib_path, lib_name):
-
-        autogen_folder = os.path.join(lib_path, 'autogen')
-        if not os.path.exists(autogen_folder):
-            os.makedirs(autogen_folder)
 
         src_folder = os.path.join(lib_path, 'src')
         if not os.path.exists(src_folder):
@@ -135,16 +141,17 @@ class LibraryManager:
 
         if not os.path.exists(self._plugins_path(lib_path)):
             plugins_txt = _PLUGINS_TEMPLATE.replace('{{library_name}}', lib_name)
-            with open(self._plugins_path(lib_path), 'w') as f:
+            with open(self._plugins_path(lib_path), 'w',
+                    encoding=self.file_text_encoding) as f:
                 f.write(plugins_txt)
 
-        if not os.path.exists(self._package_path(lib_path)):
+        if not self._package_file_exists(lib_path):
             lib_meta = build_library_package(lib_name)
             write_json(Path(self._package_path(lib_path)), lib_meta, indent=4, sort_keys=False)
 
-        if not os.path.exists(self._manifest_path(lib_path)):
+        if not os.path.exists(self._manifest_path(lib_name)):
             manifest = build_library_manifest(lib_name)
-            write_json(Path(self._manifest_path(lib_path)), manifest, indent=4, sort_keys=False)
+            write_json(Path(self._manifest_path(lib_name)), manifest, indent=4, sort_keys=False)
 
     def _ensure_layout(self, init_anot_only: bool = False):
         """Ensure required directory structure exists."""
@@ -167,18 +174,20 @@ class LibraryManager:
             full_path = os.path.join(reg, n)
             manifest_file = None
             if os.path.isdir(full_path):
-                manifest_file = self._manifest_path(full_path)
+                name = self._lib_name_from_path(full_path)
+                manifest_file = self._manifest_path(name)
             elif n.endswith('.json'):
-                with open(full_path, 'r') as f:
+                with open(full_path, 'r', encoding=self.file_text_encoding) as f:
                     s = json5.load(f)
                     lib = s['Path']
-                    manifest_file = self._manifest_path(lib)
+                    name = self._lib_name_from_path(lib)
+                    manifest_file = self._manifest_path(name)
             if os.path.isfile(manifest_file):
-                with open(manifest_file, 'r') as f:
+                with open(manifest_file, 'r', encoding=self.file_text_encoding) as f:
                     data = json5.load(f)
                     registry = self._manifest_plugins(data)
                     pt_dict = {}
-                    for k, v in registry.items():
+                    for v in registry.values():
                         plugin_type = v["PluginType"]
                         if plugin_type not in pt_dict:
                             pt_dict[plugin_type] = []
@@ -189,7 +198,7 @@ class LibraryManager:
     def get_library_path(self, lib_name):
         """Get the path to a library by name."""
         if self.is_valid_plugin_library(lib_name):
-            return lib_name
+            return str(Path(lib_name).resolve())
 
         reg = rp.get_app_libraries_path()
         fs = os.listdir(str(reg.resolve()))
@@ -204,10 +213,9 @@ class LibraryManager:
             if os.path.isdir(full_path):
                 return full_path
             elif n.endswith('.json'):
-                with open(full_path, 'r') as f:
-                    s = load_json5(Path(full_path))
-                    lib = s['Path']
-                    return lib
+                s = load_json5(Path(full_path))
+                lib = s['Path']
+                return lib
         return None
 
 
@@ -215,7 +223,7 @@ class LibraryManager:
         """Check if a path is a valid plugin library."""
         if path is None:
             return False
-        return os.path.isfile(self._package_path(path)) and \
+        return self._package_file_exists(path) and \
             os.path.isfile(self._plugins_path(path))
 
     def list_plugin_libraries(self):
@@ -238,17 +246,16 @@ class LibraryManager:
                         "Version": info['Version']
                     })
             elif n.endswith('.json'):
-                with open(full_path, 'r') as f:
-                    s = load_json5(Path(full_path))
-                    lib = s['Path']
-                    if os.path.isdir(lib) and self.is_valid_plugin_library(lib):
-                        info = self.get_library_info(lib, only_registered=True)
-                        libs.append({
-                            "Name": info['Library'],
-                            "Type": "link",
-                            "Path": lib,
-                            "Version": info['Version']
-                        })
+                s = load_json5(Path(full_path))
+                lib = s['Path']
+                if os.path.isdir(lib) and self.is_valid_plugin_library(lib):
+                    info = self.get_library_info(lib, only_registered=True)
+                    libs.append({
+                        "Name": info['Library'],
+                        "Type": "link",
+                        "Path": lib,
+                        "Version": info['Version']
+                    })
         return libs
 
     # Plugin File Methods
@@ -267,7 +274,7 @@ class LibraryManager:
         return ext in supported_extensions
 
 
-    def get_plugin_info_from_file(self, plugin_file,
+    def get_plugin_info_from_file(self, plugin_file, desired_library,
             plugin_name=None, persist_compiled_files=False) -> PluginInfo:
         """Get plugin information from a plugin file."""
         parse_result = parse_plugin_file(plugin_file)
@@ -297,6 +304,7 @@ class LibraryManager:
         plugin_types = ptyp_reg_api.get_plugin_types()
         validation = validate_plugin(plugin_info,
                 plugin_types=plugin_types,
+                desired_library=desired_library,
                 persist_compiled_files=persist_compiled_files
         )
         if not validation.is_valid:
@@ -347,6 +355,18 @@ class LibraryManager:
 
         return Path(lib_path) / plugin_path_relative_to_library
 
+
+    def load_package_file(self, library_path):
+        if os.path.isfile(self._package_path(library_path)):
+            return load_json5(Path(self._package_path(library_path)))
+        elif os.path.isfile(self._package_xml_path(library_path)):
+            import xmltodict
+            with open(self._package_xml_path(library_path), 'r', encoding='utf-8') as f:
+                xml_content = f.read()
+            return self._parse_package_xml(xmltodict.parse(xml_content))
+        raise ValueError(f"Library at '{library_path}'"
+            +   " does not contain a valid package file (JSON or XML).")
+
     # Library Info Methods
     def get_library_info(self, lib_name_or_path, only_registered=True):
         """Get library metadata information."""
@@ -357,46 +377,40 @@ class LibraryManager:
                 path = self.get_library_path(lib_name_or_path)
             if not os.path.isdir(lib_name_or_path) and not os.path.isdir(path):
                 raise ValueError(f"Library '{lib_name_or_path}' is not a valid library")
-            info = load_json5(Path(self._package_path(path)))
+            info = self.load_package_file(path)
         else:
             if self.is_valid_plugin_library(lib_name_or_path):
-                info = load_json5(Path(self._package_path(lib_name_or_path)))
+                info = self.load_package_file(lib_name_or_path)
             else:
                 raise ValueError(f"Path '{lib_name_or_path}' is not a valid library")
         return info
 
     def get_plugin_info_from_lib(self, plugin_name, lib_name_or_path=None):
         """Get plugin information from a specific library."""
-        if lib_name_or_path is None:
-            lib_name_or_path, plugin_name = self.parse_plugin_name(plugin_name)
-
-        lib_path = self.get_library_path(lib_name_or_path)
+        plugin_name, lib_name = \
+            self._resolve_plugin_name_and_library(plugin_name, lib_name_or_path)
+        lib_path = self.get_library_path(lib_name)
         if not self.is_valid_plugin_library(lib_path):
-            raise ValueError(f"Library '{lib_name_or_path}' is not a valid library")
-        lib_name = self._lib_name_from_path(lib_path)
-        manifest = self.load_lib_manifest(lib_path)
+            raise ValueError(f"Library '{lib_name}' is not a valid library")
 
-        registry = self._manifest_plugins(manifest)
-        plugin_name = f"{lib_name}::{plugin_name}"
-        info = registry.get(plugin_name, None)
-        if info is None:
+        json_path = rp.get_app_registry_plugin_json_path(plugin_name)
+        if not os.path.isfile(json_path):
             raise ValueError(f"Plugin '{plugin_name}' not found in library '{lib_name}'")
-        return info
+        return load_json5(Path(json_path))
+
 
     def get_plugin_type_info_from_lib(self, plugin_type_name, lib_name_or_path=None):
         """Get plugin type information from a specific library."""
-        if lib_name_or_path is None:
-            lib_name_or_path, plugin_type_name = self.parse_plugin_name(plugin_type_name)
-        lib_path = self.get_library_path(lib_name_or_path)
-        lib_name = self._lib_name_from_path(lib_path)
-        manifest = self.load_lib_manifest(lib_path)
+        plugin_type_name, lib_name = \
+            self._resolve_plugin_name_and_library(plugin_type_name, lib_name_or_path)
+        lib_path = self.get_library_path(lib_name)
+        if not self.is_valid_plugin_library(lib_path):
+            raise ValueError(f"Library '{lib_name}' is not a valid library")
 
-        plugin_types = self._manifest_plugin_types(manifest)
-        plugin_type = f"{lib_name}::{plugin_type_name}"
-        info =  plugin_types.get(plugin_type, None)
-        if info is None:
+        json_path = rp.get_app_registry_plugin_type_json_path(plugin_type_name)
+        if not os.path.isfile(json_path):
             raise ValueError(f"Plugin type '{plugin_type_name}' not found in library '{lib_name}'")
-        return info
+        return load_json5(Path(json_path))
 
     # Library Management Methods
     def refresh_plugin_library(self, lib_name, throw=True):
@@ -417,7 +431,7 @@ class LibraryManager:
         for comp_path in self._iter_registration_files(path,
                 plugins.get(LIBRARY_PLUGINS_KEY, []), exts, "Plugin"):
             try:
-                comp_info = self.get_plugin_info_from_file(comp_path, persist_compiled_files=True)
+                comp_info = self.get_plugin_info_from_file(comp_path, lib_name, persist_compiled_files=True)
             except Exception as e:
                 warnings.warn(f"Failed to get plugin info from '{comp_path}': {e}")
                 if throw:
@@ -425,7 +439,7 @@ class LibraryManager:
                 continue
             self.register_plugin(comp_info, lib_name, append_to_json=False, append_to_manifest=True)
 
-    def register_plugin_library(self, path, link_register=False, ask_dialog=True):
+    def register_plugin_library(self, path, link_register=False):
         """Register a plugin library."""
         reg_path = rp.get_app_libraries_path()
         lib_path = Path(path).resolve()
@@ -441,16 +455,13 @@ class LibraryManager:
             info = self.get_library_info(lib_path, only_registered=False)
             if json_path.exists():
                 raise FileExistsError(f"Library '{lib_path.name}' already exists in registry")
-            with open(json_path, 'w') as f:
+            with open(json_path, 'w', encoding=self.file_text_encoding) as f:
                 json.dump({
                     'Path': str(lib_path),
                     'Library': info['Library'],
                     'Version': info.get('Version', '0.0.1')
                 }, f, indent=4)
 
-        autogen_path = lib_path / 'autogen'
-        if autogen_path.exists():
-            shutil.rmtree(autogen_path)
         self.ensure_library_structure(lib_path, lib_path.name)
 
         try:
@@ -480,7 +491,7 @@ class LibraryManager:
         else:
             raise FileNotFoundError(f"Library '{lib_name}' not found in registry")
 
-    def get_or_create_plugin_library(self, lib_name, library_path=None, close_after_creation=False):
+    def get_or_create_plugin_library(self, lib_name, library_path=None):
         """Get or create a plugin library."""
         path = self.get_library_path(lib_name)
         if path is not None:
@@ -496,7 +507,7 @@ class LibraryManager:
         self.ensure_library_structure(path, lib_name)
 
         if library_path is not None:
-            self.register_plugin_library(path, link_register=True, ask_dialog=False)
+            self.register_plugin_library(path, link_register=True)
 
         return LibraryHandle(path=Path(path), name=lib_name)
 
@@ -531,7 +542,7 @@ class LibraryManager:
         # Plugin_file must be in the library context
         if not plugin_file.is_relative_to(path):
             raise ValueError(f"File '{plugin_file}' is not in the library context '{path}'.")
-        info = self.get_plugin_info_from_file(plugin_file, persist_compiled_files=True)
+        info = self.get_plugin_info_from_file(plugin_file, lib_name, persist_compiled_files=True)
         return self.register_plugin(info, lib_name)
 
     def register_plugin(self, plugin_info: PluginInfo, lib_name: str, append_to_json=True, append_to_manifest=True):
@@ -589,24 +600,29 @@ class LibraryManager:
             write_json(Path(plugins_file), plugins_data, indent=4, sort_keys=False)
 
         if append_to_manifest:
+            plugin_path = rp.get_app_registry_plugin_json_path(
+                plugin_info['PluginName'])
+            write_json(plugin_path, plugin_info, indent=2, sort_keys=False)
             self.add_to_manifest(lib_name, plugin_or_list=plugin_info)
         return plugin_info
 
     def load_lib_manifest(self, lib_path):
         """Load the manifest file for a library."""
-        manifest_file = self._manifest_path(lib_path)
+        lib_name = self._lib_name_from_path(lib_path)
+        manifest_file = self._manifest_path(lib_name)
         if not os.path.isfile(manifest_file):
             raise ValueError(f"Library at '{lib_path}' does not contain a valid {LIBRARY_MANIFEST_FILENAME} file")
         return load_json5(Path(manifest_file))
 
     def save_lib_manifest(self, lib_path, manifest_data):
         """Save the manifest file for a library."""
-        manifest_file = self._manifest_path(lib_path)
+        lib_name = self._lib_name_from_path(lib_path)
+        manifest_file = self._manifest_path(lib_name)
         write_json(Path(manifest_file), manifest_data, indent=4, sort_keys=False)
 
     def add_to_manifest(self, lib_name,
-            plugin_or_list: dict | list | None = None,
-            plugin_type_or_list: dict | list | None = None):
+            plugin_or_list: PluginInfo | list | None = None,
+            plugin_type_or_list: PluginTypeInfo | list | None = None):
         lib_path = self.get_library_path(lib_name)
         manifest_data = self.load_lib_manifest(lib_path)
 
@@ -616,14 +632,16 @@ class LibraryManager:
             for plugin in plugin_list:
                 plugin_name = plugin['PluginName']
                 manifest_data.setdefault(LIBRARY_PLUGINS_KEY, {})
-                manifest_data[LIBRARY_PLUGINS_KEY][plugin_name] = plugin
+                manifest_data[LIBRARY_PLUGINS_KEY][plugin_name] = \
+                    build_library_manifest_plugin_entry(plugin)
         if plugin_type_or_list is not None:
             plugin_type_list = plugin_type_or_list \
                     if isinstance(plugin_type_or_list, list) else [plugin_type_or_list]
             for plugin_type in plugin_type_list:
                 plugin_type_name = plugin_type['PluginTypeName']
                 manifest_data.setdefault(LIBRARY_PLUGIN_TYPES_KEY, {})
-                manifest_data[LIBRARY_PLUGIN_TYPES_KEY][plugin_type_name] = plugin_type
+                manifest_data[LIBRARY_PLUGIN_TYPES_KEY][plugin_type_name] = \
+                    build_library_manifest_plugin_type_entry(plugin_type)
 
         self.save_lib_manifest(lib_path, manifest_data)
 
@@ -636,7 +654,7 @@ class LibraryManager:
         manifest_data = self.load_lib_manifest(lib_path)
         registry = self._manifest_plugins(manifest_data)
         found = False
-        for comp_type, comps in registry.items():
+        for comps in registry.values():
             for comp in comps:
                 if comp['Name'] == plugin_name:
                     comps.remove(comp)
@@ -715,6 +733,96 @@ class LibraryManager:
                     warnings.warn(f"{entry_label} source '{description_file}' is not a Python file. Skipping...")
                     continue
                 yield description_file
+
+    def _resolve_plugin_name_and_library(self, plugin_name, lib_name_or_path=None):
+        if lib_name_or_path is None:
+            lib_name, _ = self.parse_plugin_name(plugin_name)
+        else:
+            if self.is_valid_plugin_library(lib_name_or_path):
+                lib_name = self._lib_name_from_path(lib_name_or_path)
+            else:
+                lib_name = lib_name_or_path
+            plugin_name_stub = plugin_name.split("::")[-1]
+            plugin_name = f"{lib_name}::{plugin_name_stub}"
+        return plugin_name, lib_name
+
+    def _parse_package_xml(self, xml_dict):
+        """Parse a package XML dictionary into a package dictionary."""
+        if not isinstance(xml_dict, dict):
+            raise ValueError("Invalid XML structure: expected a dictionary.")
+        package = {}
+        xml_package = xml_dict.get("package")
+        for key, value in xml_package.items():
+            if key == 'name':
+                package["Library"] = value
+            elif key == 'version':
+                package["Version"] = value
+            elif key == 'description':
+                package["Description"] = value
+            elif key == 'maintainer':
+                maintainers = []
+                if not isinstance(value, list):
+                    value = [value]
+                for maintainer in value:
+                    maintainer_name = maintainer if isinstance(maintainer, str) else maintainer.get("#text", "")
+                    maintainer_email = maintainer.get("@email", "") if isinstance(maintainer, dict) else ""
+                    maintainers.append({
+                        "Name": maintainer_name,
+                        "Email": maintainer_email
+                    })
+                if len(maintainers) > 1:
+                    package["Maintainers"] = maintainers
+                elif len(maintainers) == 1:
+                    package["Maintainer"] = maintainers[0]
+                else:
+                    package["Maintainer"] = {"Name": "", "Email": ""}
+            elif key == 'license':
+                package["License"] = value
+            elif key == 'url':
+                package["URL"] = value if isinstance(value, str) else value.get("#text", "")
+
+        def parse_dep(dep_entry):
+            if isinstance(dep_entry, dict):
+                dep_name = dep_entry.get("#text", "")
+                if "@version_eq" in dep_entry:
+                    return f"{dep_name}=={dep_entry['@version_eq']}"
+                elif "@version_lt" in dep_entry:
+                    return f"{dep_name}<{dep_entry['@version_lt']}"
+                elif "@version_gt" in dep_entry:
+                    return f"{dep_name}>{dep_entry['@version_gt']}"
+                elif "@version_lte" in dep_entry:
+                    return f"{dep_name}<={dep_entry['@version_lte']}"
+                elif "@version_gte" in dep_entry:
+                    return f"{dep_name}>={dep_entry['@version_gte']}"
+            else:
+                return dep_entry
+
+        ros_dependencies = []
+        if "depend" in xml_package:
+            xml_dependencies = xml_package["depend"]
+            if not isinstance(xml_dependencies, list):
+                xml_dependencies = [xml_dependencies]
+            for dep in xml_dependencies:
+                ros_dependencies.append(parse_dep(dep))
+        dependencies = []
+        if "export" in xml_package:
+            xml_exports = xml_package["export"]
+            if "rpp_dependencies" in xml_exports:
+                xml_rpp_deps = xml_exports["rpp_dependencies"]
+                if xml_rpp_deps is None:
+                    xml_rpp_deps = {}
+                if "depend" in xml_rpp_deps:
+                    xml_rpp_depend_entries = xml_rpp_deps["depend"]
+                    if not isinstance(xml_rpp_depend_entries, list):
+                        xml_rpp_depend_entries = [xml_rpp_depend_entries]
+                    for dep in xml_rpp_depend_entries:
+                        dependencies.append(parse_dep(dep))
+
+        package["RosDependencies"] = ros_dependencies
+        package["Dependencies"] = dependencies
+
+        return package
+
 
 
 # Template for plugins.json

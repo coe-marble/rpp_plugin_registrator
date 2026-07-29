@@ -3,12 +3,12 @@ from __future__ import annotations
 import re, secrets
 from pathlib import Path
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from xml.dom.minidom import TypeInfo
 
 import capnp
 
-from ..registry_paths import get_app_capnp_interfaces_path
+from ..registry_config import get_app_capnp_interfaces_path
 
 from .core import (
     FieldInfo,
@@ -41,8 +41,13 @@ def check_if_capnp_type_is_plugin(plugin_type) -> bool:
             return True, plugin_name
     return False, ''
 
+def parse_dependency(lib_and_file_name: str) -> Tuple[str, str] | None:
+    if '/' in lib_and_file_name:
+        lib_name, file_name = lib_and_file_name.split('/')
+        return lib_name, Path(file_name).name
+    return None
 
-def parse_capnp_plugin_from_param(plugin_param: Dict[str, Any], parser) -> TypeInfo:
+def parse_capnp_type_from_param(plugin_param: Dict[str, Any], parser, dependencies) -> TypeInfo:
     from capnp import KjException
     # try to parse complex types. hasattr will raise an exception...
     try:
@@ -51,6 +56,12 @@ def parse_capnp_plugin_from_param(plugin_param: Dict[str, Any], parser) -> TypeI
                 and hasattr(plugin_param.schema, "fields_list"):
             display_name = plugin_param.schema.node.displayName
             name = display_name.split(':')[-1]
+
+            lib_and_file_name = display_name.split(':')[0]
+            dep = parse_dependency(lib_and_file_name)
+            if dep and dep not in dependencies:
+                dependencies.append(dep)
+
             return TypeInfo(
                 kind="struct",
                 name=name,
@@ -59,9 +70,10 @@ def parse_capnp_plugin_from_param(plugin_param: Dict[str, Any], parser) -> TypeI
     except KjException:
         pass
 
-    return parse_capnp_plugin_type_from_type_dict(plugin_param.proto.slot.type.to_dict(), parser)
+    return parse_capnp_plugin_type_from_type_dict(plugin_param.proto.slot.type.to_dict(), parser, dependencies)
 
-def parse_capnp_plugin_type_from_type_dict(plugin_type: Dict[str, Any], parser) -> TypeInfo:
+def parse_capnp_plugin_type_from_type_dict(
+        plugin_type: Dict[str, Any], parser, dependencies) -> TypeInfo:
     is_list = "list" in plugin_type and plugin_type["list"] is not None
     if is_list:
         element_type = plugin_type["list"]["elementType"]
@@ -69,13 +81,16 @@ def parse_capnp_plugin_type_from_type_dict(plugin_type: Dict[str, Any], parser) 
             return TypeInfo(
                 kind="list",
                 name=None,
-                element_type=parse_capnp_plugin_type_from_type_dict(element_type, parser),
+                element_type=parse_capnp_plugin_type_from_type_dict(
+                    element_type, parser, dependencies),
             )
         else:
             return TypeInfo(
                 kind="list",
                 name=element_type.name if hasattr(element_type, 'name') else None,
-                element_type=parse_capnp_plugin_type_from_type_dict(element_type.to_dict(), parser) if hasattr(element_type, 'to_dict') else None,
+                element_type=parse_capnp_plugin_type_from_type_dict(
+                    element_type.to_dict(), parser, dependencies) \
+                        if hasattr(element_type, 'to_dict') else None,
             )
     is_struct = "struct" in plugin_type and plugin_type["struct"] is not None
     if is_struct:
@@ -83,6 +98,11 @@ def parse_capnp_plugin_type_from_type_dict(plugin_type: Dict[str, Any], parser) 
         type_info = parser.modules_by_id.get(type_id)
         type_display_name = type_info.schema.node.displayName
         name = type_display_name.split(':')[-1]
+
+        lib_and_file_name = type_display_name.split(':')[0]
+        dep = parse_dependency(lib_and_file_name)
+        if dep and dep not in dependencies:
+            dependencies.append(dep)
 
         return TypeInfo(
             kind="struct",
@@ -95,7 +115,7 @@ def parse_capnp_plugin_type_from_type_dict(plugin_type: Dict[str, Any], parser) 
         kind="primitive",
     )
 
-def build_struct_description(msg, struct_node, parser) -> StructInfo:
+def build_struct_description(msg, struct_node, parser, dependencies) -> StructInfo:
     class_name = struct_node.displayName.split(':')[-1]
     fields = []
     for key, value in msg.schema.fields.items():
@@ -103,7 +123,8 @@ def build_struct_description(msg, struct_node, parser) -> StructInfo:
         type_as_dict = value.proto.slot.type.to_dict()
         fields.append(FieldInfo(
             name=field_name,
-            type=parse_capnp_plugin_type_from_type_dict(type_as_dict, parser),
+            type=parse_capnp_plugin_type_from_type_dict(
+                type_as_dict, parser, dependencies),
         ))
     return StructInfo(
         name=class_name,
@@ -111,10 +132,14 @@ def build_struct_description(msg, struct_node, parser) -> StructInfo:
     )
 
 
-def build_interface_description(server_instance, interface_node, parser) -> InterfaceInfo:
+def build_interface_description(server_instance,
+        interface_node, parser, dependencies) -> InterfaceInfo:
     class_name = interface_node.displayName.split(':')[-1]
 
-    methods = {**server_instance.schema.methods_inherited, **server_instance.schema.methods}
+    methods = {
+        **server_instance.schema.methods_inherited,
+        **server_instance.schema.methods
+    }
     methods_info = []
 
     for method_name, method in methods.items():
@@ -122,13 +147,13 @@ def build_interface_description(server_instance, interface_node, parser) -> Inte
         results = []
         for param in method.param_type.fields_list:
             # try parse complex types. hasattr will raise an exception...
-            param_type_info = parse_capnp_plugin_from_param(param, parser)
+            param_type_info = parse_capnp_type_from_param(param, parser, dependencies)
             params.append(FieldInfo(
                 name=param.proto.name,
                 type=param_type_info,
             ))
         for result in method.result_type.fields_list:
-            result_type_info = parse_capnp_plugin_from_param(result, parser)
+            result_type_info = parse_capnp_type_from_param(result, parser, dependencies)
             results.append(FieldInfo(
                 name=result.proto.name,
                 type=result_type_info,
@@ -203,6 +228,7 @@ def parse_capnp_plugin(source_file: Path,
     plugins = []
     structs = {}
     interfaces = {}
+    dependencies = []
     for member in members:
         member_field = getattr(loaded, member)
         if not hasattr(member_field, "schema") \
@@ -217,7 +243,7 @@ def parse_capnp_plugin(source_file: Path,
                 if node.isGeneric:
                     continue
                 msg = member_field.new_message()
-                struct = build_struct_description(msg, node, parser)
+                struct = build_struct_description(msg, node, parser, dependencies)
                 structs[struct.name] = struct
             continue
         except capnp.KjException:
@@ -230,7 +256,7 @@ def parse_capnp_plugin(source_file: Path,
                     continue
                 # build interface description
                 server_instance = member_field.Server()
-                iface_desc = build_interface_description(server_instance, node, parser)
+                iface_desc = build_interface_description(server_instance, node, parser, dependencies)
                 interfaces[iface_desc.name] = iface_desc
                 is_plugin, plugin_name = check_if_capnp_type_is_plugin(member_field)
                 if is_plugin:
@@ -252,5 +278,6 @@ def parse_capnp_plugin(source_file: Path,
             interfaces=interfaces,
             script_handle=loaded,
             plugins=plugins,
+            dependencies=dependencies,
         ),
     )

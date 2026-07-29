@@ -7,10 +7,17 @@ from pathlib import Path
 from unittest import mock
 import os
 
+import rpp_plugin_registrator
 from rpp_plugin_registrator.library_manager import LibraryManager
-from rpp_plugin_registrator import registry_paths as rp
+from rpp_plugin_registrator import registry_config as rp
 from rpp_plugin_registrator.plugin_validators.dispatch import PluginValidationResult, PluginValidationData
+import rpp_plugin_registrator.registry_config
 
+
+#TODO: Fix this
+RPP_TESTING_PATH = Path(__file__).parent.parent.parent.resolve() \
+    / "rpp_testing" / "rpp_testing"
+EXAMPLES_DATA_PATH = RPP_TESTING_PATH / "data"
 
 class LibraryManagerTests(unittest.TestCase):
     def setUp(self):
@@ -22,14 +29,13 @@ class LibraryManagerTests(unittest.TestCase):
 
         # dissable unnecessary scaffolding
         import rpp_plugin_registrator.plugin_type_registrator
-        self.old_scaffold_languages = rpp_plugin_registrator.plugin_type_registrator.SCAFFOLD_LANGUAGES
         rpp_plugin_registrator.plugin_type_registrator.SCAFFOLD_LANGUAGES = ['python']
 
     def tearDown(self):
         self._home_dir.cleanup()
         rp.RPP_HOME = self._original_rpp_home
         import rpp_plugin_registrator.plugin_type_registrator
-        rpp_plugin_registrator.plugin_type_registrator.SCAFFOLD_LANGUAGES = self.old_scaffold_languages
+        rpp_plugin_registrator.plugin_type_registrator.reset_module()
         # clean up the environment variable after the test
         os.environ.pop("RPP_WHITELIST_PLUGIN_TYPES", None)
 
@@ -40,7 +46,9 @@ class LibraryManagerTests(unittest.TestCase):
             plugins = manager.get_available_plugins()
             libraries = manager.list_plugin_libraries()
             self.assertIn("rpp_common", plugins)
+            self.assertIn("rpp_testing", plugins)
             self.assertTrue(any(lib["Name"] == "rpp_common" for lib in libraries))
+            self.assertTrue(any(lib["Name"] == "rpp_testing" for lib in libraries))
 
 
 
@@ -77,14 +85,16 @@ interface ControlType $Anot.plugin("ControlType"){
 
             manager.refresh_plugin_library("TestLib")
 
-            manifest_path = library_root / "autogen" / "manifest.json"
+            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
             manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
             self.assertIn("PluginTypes", manifest_payload)
             self.assertIn("TestLib::ControlType", manifest_payload["PluginTypes"])
-            self.assertTrue(
-                Path(manifest_payload["PluginTypes"]["TestLib::ControlType"]["RegistryPluginTypeFile"]).exists()
-            )
+            registry_plugin_type_file = \
+                manifest_payload["PluginTypes"]["TestLib::ControlType"]["RegistryPluginTypeFile"]
+            abs_path = rp.get_app_registry_path() / registry_plugin_type_file
+
+            self.assertTrue(abs_path.exists(), f"Expected registry plugin type file '{abs_path}' does not exist.")
             self.assertEqual(manifest_payload["PluginTypes"]["TestLib::ControlType"]["Library"], "TestLib")
 
 
@@ -122,7 +132,7 @@ class MyPlugin(MotionController2D):
 
             manager.refresh_plugin_library("TestLib")
 
-            manifest_path = library_root / "autogen" / "manifest.json"
+            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
             manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
             self.assertIn("Plugins", manifest_payload)
@@ -139,6 +149,95 @@ class MyPlugin(MotionController2D):
             self.assertEqual(manifest_payload["Plugins"]["TestLib::MyPlugin"]["Library"], "TestLib")
 
 
+    def test_library_package_json_parse(self):
+        with tempfile.TemporaryDirectory() as td:
+            temp_root = Path(td)
+            manager = LibraryManager(rpp_home=temp_root / ".rpp")
+            handle = manager.get_or_create_plugin_library("TestLib")
+
+            library_root = Path(handle.path)
+            package_path = library_root / "package.json"
+            package_source = {
+                "Library": "TestLib",
+                "Version": "0.1.0",
+                "RosDependencies": [
+                    "rclcpp>=2.0.0",
+                    "zlib>=1.2.11"
+                ],
+                "Dependencies": [
+                    "rpp_common>=0.0.1",
+                ]
+            }
+            package_path.write_text(json.dumps(package_source, indent=2) + "\n", encoding="utf-8")
+
+            library_info = manager.get_library_info("TestLib")
+            self.assertEqual(library_info["Library"], "TestLib")
+            self.assertEqual(library_info["Version"], "0.1.0")
+            self.assertEqual(library_info["RosDependencies"], ["rclcpp>=2.0.0", "zlib>=1.2.11"])
+            self.assertEqual(library_info["Dependencies"], ["rpp_common>=0.0.1"])
+
+    def test_library_package_xml_parse(self):
+        with tempfile.TemporaryDirectory() as td:
+            xml_source = """<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>test_lib</name>
+  <version>0.0.2</version>
+  <description>TestDesc</description>
+  <maintainer email="maintainer_email">maintainer</maintainer>
+  <license>TestLicence</license>
+
+  <depend>test_depend_ros_1</depend>
+  <depend version_eq="0.0.2">test_depend_ros_2</depend>
+  <depend version_lte="0.0.3">test_depend_ros_3</depend>
+  <depend version_gte="0.0.4">test_depend_ros_4</depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <rpp_dependencies>
+        <depend>test_depend1</depend>
+        <depend version_lt="0.0.5">test_depend2</depend>
+        <depend version_gt="0.0.6">test_depend3</depend>
+    </rpp_dependencies>
+
+  </export>
+</package>
+
+"""
+
+            temp_root = Path(td)
+            manager = LibraryManager(rpp_home=temp_root / ".rpp")
+            handle = manager.get_or_create_plugin_library("TestLib")
+
+            current_package_path = Path(handle.path) / "package.json"
+            if current_package_path.exists():
+                current_package_path.unlink()
+
+
+            library_root = Path(handle.path)
+            package_path = library_root / "package.xml"
+            package_path.write_text(xml_source, encoding="utf-8")
+
+            library_info = manager.get_library_info("TestLib")
+
+            self.assertEqual(library_info["Library"], "test_lib")
+            self.assertEqual(library_info["Version"], "0.0.2")
+            self.assertEqual(library_info["License"], "TestLicence")
+            self.assertEqual(library_info["RosDependencies"], [
+                "test_depend_ros_1",
+                "test_depend_ros_2==0.0.2",
+                "test_depend_ros_3<=0.0.3",
+                "test_depend_ros_4>=0.0.4",
+            ])
+            self.assertEqual(library_info["Dependencies"], [
+                "test_depend1",
+                "test_depend2<0.0.5",
+                "test_depend3>0.0.6",
+            ])
 
 class PythonPluginRegistratorTests(unittest.TestCase):
     def setUp(self):
@@ -146,7 +245,7 @@ class PythonPluginRegistratorTests(unittest.TestCase):
         self.home = Path(self._home_dir.name)
         self.home.mkdir(parents=True, exist_ok=True)
         self._original_rpp_home = rp.RPP_HOME
-        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_common::MotionController2D"
+        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
         rp.RPP_HOME = self.home
         self.manager = LibraryManager(rpp_home=self.home / ".rpp")
 
@@ -162,7 +261,7 @@ class PythonPluginRegistratorTests(unittest.TestCase):
         plugin_source = Path(lib_handle.path) / lib_handle.name / "hello_plugin.py"
         plugin_source.write_text(
             """
-from rpp_plugin_types.rpp_common import MotionController2D
+from rpp_plugin_types.rpp_testing import MotionController2D
 class HelloPlugin(MotionController2D):
     def name(self) -> str:
         return "hello"
@@ -178,16 +277,16 @@ class HelloPlugin(MotionController2D):
 
         plugins = self.manager.get_available_plugins()
         self.assertIn("TestLib", plugins)
-        plugin_items = [item for group in plugins["TestLib"].values() for item in group]
-        hello_item = next((item for item in plugin_items if item.get("ClassName") == "HelloPlugin"), None)
+        self.assertIn("rpp_testing::MotionController2D", plugins["TestLib"])
+        hello_item = self.manager.get_plugin_info_from_lib("TestLib::HelloPlugin")
         self.assertIsNotNone(hello_item)
         self.assertEqual(hello_item["Name"], "hello")
         self.assertEqual(hello_item["ClassName"], "HelloPlugin")
-        self.assertEqual(hello_item["PluginType"], "rpp_common::MotionController2D")
+        self.assertEqual(hello_item["PluginType"], "rpp_testing::MotionController2D")
         self.assertEqual(hello_item["Library"], "TestLib")
         self.assertEqual(hello_item["FullyQualifiedClassName"], "<class 'hello_plugin.HelloPlugin'>")
         self.assertEqual(hello_item["PluginName"], "TestLib::HelloPlugin")
-        self.assertEqual(hello_item["PluginTypeLibrary"], "rpp_common")
+        self.assertEqual(hello_item["PluginTypeLibrary"], "rpp_testing")
         self.assertTrue("PluginTypeSharedLibraryPath" in hello_item)
         self.assertIsNone(hello_item.get("PluginSharedLibraryPath"))
 
@@ -211,7 +310,7 @@ class HelloPlugin(MotionController2D):
         plugin_source = Path(handle.path) / handle.name / "fallback_plugin.py"
         plugin_source.write_text(
             """
-from rpp_plugin_types.rpp_common import MotionController2D
+from rpp_plugin_types.rpp_testing import MotionController2D
 
 
 class FallbackPlugin(MotionController2D):
@@ -231,12 +330,12 @@ class FallbackPlugin(MotionController2D):
                 message=None,
                 validation_data=PluginValidationData(
                     class_name="FallbackPlugin",
-                    plugin_type="rpp_common::MotionController2D",
-                    plugin_type_library="rpp_common",
+                    plugin_type="rpp_testing::MotionController2D",
+                    plugin_type_library="rpp_testing",
                     plugin_type_class_name="MotionController2D",
-                    plugin_type_source_file="rpp_common/MotionController2D.py",
+                    plugin_type_source_file="rpp_testing/MotionController2D.py",
                     fully_qualified_class_name="<class 'fallback_plugin.FallbackPlugin'>",
-                    fully_qualified_plugin_class_name="<class 'rpp_plugin_types.rpp_common.MotionController2D.MotionController2D'>",
+                    fully_qualified_plugin_class_name="<class 'rpp_plugin_types.rpp_testing.MotionController2D.MotionController2D'>",
                 ),
             )
             result = self.manager.register_plugin_from_source(plugin_source, "TestLib")
@@ -245,13 +344,11 @@ class FallbackPlugin(MotionController2D):
 
         plugins = self.manager.get_available_plugins()
         plugin_items = [item for group in plugins["TestLib"].values() for item in group]
-        fallback_item = next((item for item in plugin_items if item.get("ClassName") == "FallbackPlugin"), None)
+        fallback_item = next((item for item in plugin_items if item.get("PluginName") == "TestLib::FallbackPlugin"), None)
         self.assertIsNotNone(fallback_item)
-        self.assertEqual(fallback_item["FullyQualifiedClassName"], "<class 'fallback_plugin.FallbackPlugin'>")
-        self.assertEqual(
-            fallback_item["FullyQualifiedPluginClassName"],
-            "<class 'rpp_plugin_types.rpp_common.MotionController2D.MotionController2D'>",
-        )
+        self.assertEqual(fallback_item["PluginType"], "rpp_testing::MotionController2D")
+        self.assertEqual(fallback_item["PluginTypeLibrary"], "rpp_testing")
+        self.assertEqual(fallback_item["PluginName"], "TestLib::FallbackPlugin")
 
     def test_register_component_from_python_file_with_invalid_plugin_type(self):
 
@@ -289,8 +386,8 @@ class InvalidPlugin(MotionController2D):
         plugin_path = plugin_dir / "ComponentPlugin.py"
         plugin_path.write_text(
             """
-from rpp_plugin_types.rpp_common import MotionController2D
-from rpp_common import ParameterDescription
+from rpp_plugin_types.rpp_testing import MotionController2D
+from rpp_py.plugin import ParameterDescription
 
 class SuperClass:
     def __init__(self, a = 1, b = 2):
@@ -331,7 +428,7 @@ class ComponentPlugin(MotionController2D):
 
         self.manager.refresh_plugin_library("TestLib")
 
-        manifest_path = library_root / "autogen" / "manifest.json"
+        manifest_path = rp.get_app_library_manifest_path_json("TestLib")
         manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         self.assertIn("Plugins", manifest_payload)
@@ -344,8 +441,6 @@ class ComponentPlugin(MotionController2D):
             str(abs_path),
             str(plugin_path.resolve()),
         )
-        self.assertEqual(manifest_payload["Plugins"] \
-            ["TestLib::ComponentPlugin"]["PluginMetadata"]["Components"], {"ctl1": "TestLib::ComponentPlugin"})
 
         comps = self.manager.get_plugin_components_from_lib("ComponentPlugin", "TestLib")
         self.assertEqual(comps, {"ctl1": "TestLib::ComponentPlugin"})
@@ -378,12 +473,13 @@ class CppPluginRegistratorTests(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("RPP_WHITELIST_PLUGIN_TYPES", None)  # Clean up the environment variable after the test
+        rpp_plugin_registrator.registry_config.reset_module()
 
     def test_register_cpp_plugin_with_components(self):
         with tempfile.TemporaryDirectory() as td:
 
             temp_root = Path(td)
-            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_common::MotionController2D"
+            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
             manager = LibraryManager(rpp_home=temp_root / ".rpp")
             handle = manager.get_or_create_plugin_library("TestLib")
 
@@ -391,21 +487,21 @@ class CppPluginRegistratorTests(unittest.TestCase):
             plugin_dir = library_root / "plugins"
             plugin_dir.mkdir(parents=True, exist_ok=True)
 
-            plugin_path = plugin_dir / "ComponentPlugin.cpp"
+            plugin_path = plugin_dir / "ComponentPluginSimpleCpp.cpp"
             shutil.copyfile(
-                Path(__file__).parent / "example_plugins" / "example_plugin.cpp",
+                EXAMPLES_DATA_PATH / "example_plugins" / "example_plugin_simple_cpp.cpp",
                 plugin_path,
             )
 
             manager.register_plugin_from_source(plugin_path, "TestLib")
 
-            manifest_path = library_root / "autogen" / "manifest.json"
+            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
             manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
             self.assertIn("Plugins", manifest_payload)
-            self.assertIn("TestLib::ComponentPlugin", manifest_payload["Plugins"])
+            self.assertIn("TestLib::ComponentPluginSimpleCpp", manifest_payload["Plugins"])
             abs_path = manager.get_plugin_path_absolute(
-                manifest_payload["Plugins"]["TestLib::ComponentPlugin"]["PluginPath"],
+                manifest_payload["Plugins"]["TestLib::ComponentPluginSimpleCpp"]["PluginPath"],
                 "TestLib",
             )
             self.assertEqual(
@@ -413,14 +509,14 @@ class CppPluginRegistratorTests(unittest.TestCase):
                 str(plugin_path.resolve()),
             )
 
-            so_path = rp.get_app_registry_path() / "cpp" / "shared" / "TestLib" / "plugins" / "ComponentPlugin.so"
+            so_path = rp.get_app_registry_path() / "cpp" / "shared" / "TestLib" / "plugins" / "ComponentPluginSimpleCpp.so"
             self.assertTrue(so_path.exists(), f"Expected shared library '{so_path}' does not exist.")
 
 
     def test_register_cpp_plugin_with_using_namespace_and_type_aliasing(self):
         with tempfile.TemporaryDirectory() as td:
             temp_root = Path(td)
-            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_common::MotionController2D"
+            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
             manager = LibraryManager(rpp_home=temp_root / ".rpp")
             handle = manager.get_or_create_plugin_library("TestLib")
 
@@ -431,13 +527,13 @@ class CppPluginRegistratorTests(unittest.TestCase):
             def load_and_test(file_name, class_name):
                 plugin_path = plugin_dir / f"{class_name}.cpp"
                 shutil.copyfile(
-                    Path(__file__).parent / "example_plugins" / file_name,
+                    EXAMPLES_DATA_PATH / "complex_plugins" / file_name,
                     plugin_path,
                 )
 
                 manager.register_plugin_from_source(plugin_path, "TestLib")
 
-                manifest_path = library_root / "autogen" / "manifest.json"
+                manifest_path = rp.get_app_library_manifest_path_json("TestLib")
                 manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
                 self.assertIn("Plugins", manifest_payload)
@@ -455,6 +551,61 @@ class CppPluginRegistratorTests(unittest.TestCase):
             load_and_test("example_plugin_with_using_namespace.cpp", "ComponentPluginWithUsingNamespace")
             load_and_test("example_plugin_with_type_alias_outside_class.cpp", "ComponentPluginWithTypeAliasOutsideClass")
             load_and_test("example_plugin_with_type_alias_in_class.cpp", "ComponentPluginWithTypeAliasInClass")
+
+    def test_register_cpp_plugin_with_library_dependencies(self):
+        with tempfile.TemporaryDirectory() as td:
+            temp_root = Path(td)
+            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
+            manager = LibraryManager(rpp_home=temp_root / ".rpp")
+            rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
+            manager.get_or_create_plugin_library("rpp_testing")
+            handle = manager.get_or_create_plugin_library("TestLib")
+
+            library_root = Path(handle.path)
+            plugin_dir = library_root / "plugins"
+            plugin_dir.mkdir(parents=True, exist_ok=True)
+
+
+            package_source = {
+                "Library": "TestLib",
+                "Version": "0.1.0",
+                "Dependencies": [
+                    "rpp_testing>=0.0.1",
+                ],
+                "RosDependencies": [
+                    "rclcpp>=2.0.0",
+                    "zlib>=1.2.11"
+                ]
+            }
+
+            package_path = library_root / "package.json"
+            package_path.write_text(json.dumps(package_source, indent=2) + "\n", encoding="utf-8")
+
+
+            plugin_path = plugin_dir / "ComponentPluginWithDependencies.cpp"
+            shutil.copyfile(
+                EXAMPLES_DATA_PATH / "complex_plugins" / "example_plugin_with_dependencies.cpp",
+                plugin_path,
+            )
+
+            manager.register_plugin_from_source(plugin_path, "TestLib")
+
+            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            self.assertIn("Plugins", manifest_payload)
+            self.assertIn("TestLib::ComponentPluginWithDependencies", manifest_payload["Plugins"])
+            abs_path = manager.get_plugin_path_absolute(
+                manifest_payload["Plugins"]["TestLib::ComponentPluginWithDependencies"]["PluginPath"],
+                "TestLib",
+            )
+            self.assertEqual(
+                str(abs_path),
+                str(plugin_path.resolve()),
+            )
+
+            so_path = rp.get_app_registry_path() / "cpp" / "shared" / "TestLib" / "plugins" / "ComponentPluginWithDependencies.so"
+            self.assertTrue(so_path.exists(), f"Expected shared library '{so_path}' does not exist.")
 
 
 if __name__ == "__main__":

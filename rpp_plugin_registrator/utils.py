@@ -26,7 +26,6 @@ def load_json(path: Path) -> Dict[str, Any]:
 def load_json5(path: Path) -> Dict[str, Any]:
     return json5.loads(path.read_text(encoding="utf-8"))
 
-
 def write_json(path: Path, data: Dict[str, Any], *, indent: int = 2, sort_keys: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

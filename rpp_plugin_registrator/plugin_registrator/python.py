@@ -6,9 +6,9 @@ from typing import Any, Dict
 from cairo import HAS_ATSUI_FONT
 from rpp_common.py.descriptors import ParameterDescription
 from rpp_plugin_registrator.plugin_descriptors.core import (
-    PluginInfo, PluginRegisterData, PluginRegistrationResult
+    PluginInfo, PluginRegisterData, PluginRegistrationResult, PluginTypeInfo
 )
-from rpp_plugin_registrator.registry_paths import get_app_interfaces_path
+from rpp_plugin_registrator.registry_config import get_app_interfaces_path
 from ..utils import import_module_from_path
 
 
@@ -19,17 +19,17 @@ def parse_plugin_parameters(params: list) -> Dict[str, Any]:
         if isinstance(value, bool):
             ret_value["type"] = "bool"
             return ret_value
-        elif isinstance(value, int):
-            ret_value["type"] = "int64"
+        if isinstance(value, int):
+            ret_value["type"] = "int"
             return ret_value
-        elif isinstance(value, float):
-            ret_value["type"] = "float64"
+        if isinstance(value, float):
+            ret_value["type"] = "float"
             return ret_value
-        elif isinstance(value, str):
+        if isinstance(value, str):
             ret_value["type"] = "string"
             return ret_value
-        elif isinstance(value, list):
-            ret_value["type"] = "list"
+        if isinstance(value, list):
+            ret_value["type"] = "array"
             ret_value["default_value"] = [parse_parameter_value(f"{name}[{i}]", v) for i, v in enumerate(value)]
             ret_value["element_type"] = ret_value["default_value"][0]["type"] if ret_value["default_value"] else None
             return ret_value
@@ -40,7 +40,7 @@ def parse_plugin_parameters(params: list) -> Dict[str, Any]:
             dict_value = value
 
         if isinstance(dict_value, dict):
-            ret_value["type"] = "dict"
+            ret_value["type"] = "object"
             ret_value["fields"] = {}
             del ret_value["default_value"]
             for k, v in dict_value.items():
@@ -112,18 +112,21 @@ def remove_from_init_file(directory: str, class_name: str) -> None:
             f.truncate()
             f.writelines(lines)
 
-def generate_python_plugin_interface(plugin_info: Dict[str, Any]) -> bool:
+def generate_python_plugin_interface(plugin_type_info: PluginTypeInfo) -> bool:
     """Register a Python plugin by adding its information to the registry."""
-    lib_name = plugin_info["Library"]
-    class_name = plugin_info["ClassName"]
+    info = plugin_type_info.info
+    lib_name = info["Library"]
+    class_name = info["ClassName"]
     interfaces_path = get_app_interfaces_path() / "python" / "rpp_plugin_types" / lib_name
     add_to_init_file(interfaces_path, class_name)
     return True
 
-def remove_python_plugin_interface(plugin_info: Dict[str, Any]) -> bool:
+def remove_python_plugin_interface(plugin_type_info: PluginTypeInfo) -> bool:
     """Unregister a Python plugin by removing its information from the registry."""
-    lib_name = plugin_info["Library"]
-    class_name = plugin_info["ClassName"]
+
+    info = plugin_type_info.info
+    lib_name = info["Library"]
+    class_name = info["ClassName"]
     interfaces_path = get_app_interfaces_path() / "python" / "rpp_plugin_types" / lib_name
     remove_from_init_file(interfaces_path, class_name)
     return True

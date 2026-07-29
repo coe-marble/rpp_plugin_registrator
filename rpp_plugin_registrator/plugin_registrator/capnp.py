@@ -5,7 +5,7 @@ import re
 
 
 
-from rpp_plugin_registrator.registry_paths import \
+from rpp_plugin_registrator.registry_config import \
     get_app_capnp_interfaces_path
 
 from rpp_plugin_registrator.plugin_descriptors.capnp import overwrite_capnp_schema_id

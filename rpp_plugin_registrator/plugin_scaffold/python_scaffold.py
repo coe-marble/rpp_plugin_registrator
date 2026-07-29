@@ -286,6 +286,7 @@ import capnp
 import rpp_py.capnp_schema as capnp_schema
 import asyncio
 from rpp_py.capnp_runtime import CapnpRuntime
+from rpp_py.context import ComponentContext
 from rpp_py.adapter_info import AdapterServerParams, AdapterServerInfo
 from rpp_plugin_types.{lib_name}.{class_name} import {class_name}
 
@@ -340,6 +341,9 @@ class {class_name}_AdapterServer(capnp_schema.get_server_class("{plugin_type_nam
     def get_info_adapter_server__(self) -> AdapterServerInfo:
         return self._adapter_server_info
 
+    def initialize(self, context: ComponentContext):
+        pass
+
     {methods_str}
 '''
 
@@ -358,17 +362,17 @@ def generate_plugin_class(description: PluginTypeInfo, output_path: Path) -> Non
     imports_str = "\n".join(imports)
     content = f'''
 from rpp_common.py.RPP_Plugin import RPP_Plugin
+from rpp_py.context import ComponentContext
 {imports_str}
 
 class {class_name}(RPP_Plugin):
-    param_description = []
-    log_description = []
-    input_description = []
-    output_description = []
 
     {type_aliases_str}
 
     {methods_str}
+
+    def initialize(self, context):
+        pass
 '''
 
     lib_name = description.info["Library"]

@@ -26,7 +26,7 @@ struct rpp_parameters_extractor<T, std::void_t<decltype(T::PARAMETERS)>> {{
 
 
 extern "C" {plugin_type}* create_plugin() {{
-        return new {class_name}();
+        return new {lib_namespace}{class_name}();
     }}
 
 extern "C" void destroy_plugin({plugin_type}* plugin) {{
@@ -34,11 +34,11 @@ extern "C" void destroy_plugin({plugin_type}* plugin) {{
     }}
 
 extern "C" const std::map<std::string, std::string>* get_plugin_components() {{
-    return rpp_components_extractor<{class_name}>::get();
+    return rpp_components_extractor<{lib_namespace}{class_name}>::get();
 }}
 
 extern "C" const std::vector<rpp::params::ParameterDescription>* get_plugin_parameters_description() {{
-    return rpp_parameters_extractor<{class_name}>::get();
+    return rpp_parameters_extractor<{lib_namespace}{class_name}>::get();
 }}
 
 """

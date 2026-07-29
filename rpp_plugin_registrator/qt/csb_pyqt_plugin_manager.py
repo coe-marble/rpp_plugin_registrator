@@ -183,7 +183,8 @@ class RPPPluginManager(QMainWindow):
         fileName, _ = QFileDialog.getOpenFileName(self, "Select Library File", "",
                                                   "Shared Library File (*.json)")
         # check that it is package.json
-        if fileName and os.path.basename(fileName) == "package.json":
+        if fileName and (os.path.basename(fileName) == "package.json" \
+            or os.path.basename(fileName) == "plugins.json"):
             return fileName
         return None
 
@@ -220,7 +221,7 @@ class RPPPluginManager(QMainWindow):
             self.load_plugins()
 
         def run():
-            self.lib_manager.register_plugin_library(Path(path), int(link_install), 0)
+            self.lib_manager.register_plugin_library(Path(path), link_register=link_install)
 
         self._do_fn(run, on_finish)
 
@@ -475,7 +476,7 @@ class RPPPluginManager(QMainWindow):
 
     def open_plugin_file(self, plugin):
         path = plugin.get('PluginPath', "")
-        if plugin["Type"] == 'slx':
+        if plugin["SourceLanguage"] == 'slx':
             path = path.split(':')[0]
             self.log(f"Cannot open Simulink plugin file '{path}' from here. " \
             "Please open it from MATLAB.")

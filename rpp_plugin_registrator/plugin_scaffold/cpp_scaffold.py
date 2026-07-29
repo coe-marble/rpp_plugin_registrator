@@ -204,6 +204,7 @@ def generate_plugin_type_hpp(description: PluginTypeInfo, output_path: Path) -> 
     content = f'''#pragma once
 #include <string>
 #include "rpp_cpp/plugin.hpp"
+#include "rpp_cpp/context.hpp"
 #include "map"
 #include <type_traits>
 #include <memory>
@@ -231,6 +232,8 @@ public:
 {type_aliases}
 
 {methods_string}
+
+    virtual void initialize(const rpp::ComponentContext& /*context */) {{}}
 
 }};
 
@@ -419,11 +422,16 @@ public:
 
         private:
             schema::{lib_name}::{struct_name}::Reader reader_;
+            std::unique_ptr<capnp::MallocMessageBuilder> orphaned_msg_builder_;
         public:
             Const(schema::{lib_name}::{struct_name}::Reader reader)
             : reader_(reader) {{}}
             virtual ~Const() = default;
             Const(const {struct_name}& main_wrapper);
+            Const({struct_name}&& main_wrapper)
+            : reader_(main_wrapper.builder_.asReader()),
+              orphaned_msg_builder_(std::move(main_wrapper.msg_builder_)) {{}}
+
             operator schema::{lib_name}::{struct_name}::Reader() const {{ return reader_; }}
 '''
         for list_type in list_types:
@@ -560,6 +568,7 @@ public:
         //operator Const() const {{
         //    return Const(const_cast<{struct_name}*>(this)->builder_.asReader());
         //}}
+
 
 '''
 

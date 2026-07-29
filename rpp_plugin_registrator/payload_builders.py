@@ -4,9 +4,12 @@ from pathlib import Path
 from typing import Any, Dict, List
 from uuid import uuid4
 
-from .library_constants import LIBRARY_PLUGIN_TYPES_KEY, LIBRARY_PLUGINS_KEY
 from .plugin_descriptors.core import PluginTypeMetadata, InterfaceInfo
-
+from .registry_config import (
+    LIBRARY_PLUGINS_KEY,
+    LIBRARY_PLUGIN_TYPES_KEY,
+    get_app_registry_path
+)
 
 def build_library_manifest(
     library: str,
@@ -88,42 +91,59 @@ def build_plugin_type_info_payload(
         "Methods": [method.as_dict() for method in interface_desc.methods],
     }
 
-
-
 def build_library_manifest_plugin_type_entry(
-    plugin: Dict[str, Any],
-    description_path: Path,
-    library: str,
+    plugin: Dict[str, Any]
+) -> Dict[str, Any]:
+    path = str(Path(plugin["RegistryPluginTypeFile"])
+               .relative_to(get_app_registry_path())),
+    return {
+        "Name": plugin["Name"],
+        "PluginTypeName": plugin["PluginTypeName"],
+        "Library": plugin["Library"],
+        "ClassName": plugin["ClassName"],
+        "FullyQualifiedClassName": plugin["FullyQualifiedClassName"],
+        "RegistryPluginTypeFile": path[0],
+    }
+
+def build_library_manifest_plugin_entry(
+    plugin: Dict[str, Any]
 ) -> Dict[str, Any]:
     return {
-        "Id": plugin.get("Id"),
-        "Name": plugin.get("Name"),
-        "DescriptionFile": str(description_path.resolve()),
-        "SourceLanguage": plugin.get("SourceLanguage"),
-        "ClassName": plugin.get("ClassName"),
-        "PluginTypeName": plugin.get("PluginTypeName"),
-        "FullyQualifiedClassName": plugin.get("FullyQualifiedClassName"),
-        "Factory": plugin.get("RppRegistration", {}).get("Factory", {}),
-        "Library": library,
+        "Name": plugin["Name"],
+        "PluginName": plugin["PluginName"],
+        "PluginType": plugin["PluginType"],
+        "PluginTypeLibrary": plugin["PluginTypeLibrary"],
+        "Library": plugin["Library"],
+        "Description": plugin["Description"],
+        "PluginPath": plugin["PluginPath"],
+        "IsCasadi": plugin["IsCasadi"],
+        "SourceLanguage": plugin["SourceLanguage"],
     }
 
 
 
 def build_registry_plugin_type_entry(info: Dict[str, Any]) -> Dict[str, Any]:
-    registration = info.get("RppRegistration", {})
-    factory = registration.get("Factory", {})
-    entry = {
+    return {
         "Id": info.get("Id"),
         "Name": info.get("Name"),
         "SourceFile": info.get("SourceFile"),
         "ClassName": info.get("ClassName"),
         "PluginTypeName": info.get("PluginTypeName"),
-        "Factory": factory,
         "Library": info.get("Library"),
         "FullyQualifiedClassName": info.get("FullyQualifiedClassName"),
     }
 
-    return entry
+def build_registry_plugin_entry(info: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "Id": info.get("Id"),
+        "Name": info.get("Name"),
+        "PluginName": info.get("PluginName"),
+        "Library": info.get("Library"),
+        "Description": info.get("Description"),
+        "PluginPath": info.get("PluginPath"),
+        "IsCasadi": info.get("IsCasadi"),
+        "SourceLanguage": info.get("SourceLanguage"),
+    }
 
 def build_library_plugin_file_plugin_type_entry(name: str, path: str, entry_type: str = "file") -> Dict[str, Any]:
     return {

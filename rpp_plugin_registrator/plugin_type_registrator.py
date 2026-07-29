@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 from typing import Any, Dict, List, Optional
 import os
 
@@ -16,9 +17,9 @@ from rpp_plugin_registrator.plugin_registrator import register_plugin_type as re
 from rpp_plugin_registrator.plugin_registrator import unregister_plugin_type as unregister_plugin_type_dispatch
 from rpp_plugin_registrator.plugin_scaffold import scaffold_plugin
 
-from . import registry_paths as rp
+from . import registry_config as rp
 from .utils import load_json, write_json
-from .library_constants import (
+from .registry_config import (
     LIBRARY_MANIFEST_FILENAME,
     LIBRARY_PACKAGE_FILENAME,
     LIBRARY_PLUGINS_FILENAME,
@@ -30,11 +31,15 @@ from .payload_builders import (
     build_library_manifest,
     build_library_package,
     build_plugin_type_info_payload,
-    build_registry_plugin_type_entry,
     build_registry_payload,
+    build_registry_plugin_type_entry,
 )
 
 SCAFFOLD_LANGUAGES = ["all"]
+
+def reset_module() -> None:
+    SCAFFOLD_LANGUAGES.clear()
+    SCAFFOLD_LANGUAGES.extend(["all"])
 
 
 def plugin_id_from_plugin_name(plugin_name: str) -> str:
@@ -45,7 +50,7 @@ def default_registry_payload() -> Dict[str, Any]:
 
 
 def load_registry() -> Dict[str, Any]:
-    resolved_path = rp.get_app_registry_plugin_types_json_path()
+    resolved_path = rp.get_app_registry_json_path()
     if not resolved_path.exists():
         return default_registry_payload()
     return load_json(resolved_path)
@@ -86,8 +91,6 @@ def _resolve_common_plugins_dir(common_plugins_dir: Optional[Path]) -> Path:
 def _ensure_default_library(paths: Dict[str, Path], library_name: str) -> Path:
     library_path = paths["libraries"] / library_name
     library_path.mkdir(parents=True, exist_ok=True)
-    autogen_path = library_path / "autogen"
-    autogen_path.mkdir(parents=True, exist_ok=True)
 
     package_path = library_path / LIBRARY_PACKAGE_FILENAME
     if not package_path.exists():
@@ -103,7 +106,7 @@ def _ensure_default_library(paths: Dict[str, Path], library_name: str) -> Path:
             },
         )
 
-    manifest_path = autogen_path / LIBRARY_MANIFEST_FILENAME
+    manifest_path = rp.get_app_library_manifest_path_json(library_name)
     if not manifest_path.exists():
         write_json(manifest_path, build_library_manifest(library_name), indent=2, sort_keys=False)
 
@@ -113,11 +116,8 @@ def _initialize_common_plugins(paths: Dict[str, Path],
         common_plugins_dir: Optional[Path], init_anot_only: bool) -> List[str]:
     resolved_common_plugins_dir = _resolve_common_plugins_dir(common_plugins_dir)
 
-    default_library_name = "rpp_common"
-    _ensure_default_library(paths, default_library_name)
 
     priority_files = ["anot.capnp", "msgs.capnp"]
-
     def sort_key(file_path: Path) -> int:
         if file_path.name in priority_files:
             return priority_files.index(file_path.name)
@@ -131,6 +131,8 @@ def _initialize_common_plugins(paths: Dict[str, Path],
     initialized_plugin_types = []
     for source_file in sorted(
             resolved_common_plugins_dir.glob("**/*.capnp"), key=sort_key):
+        default_library_name = Path(source_file).parent.name
+        _ensure_default_library(paths, default_library_name)
         types = register_plugin_type_from_source(source_file,
                 default_library_name, whitelist_plugins=whitelist_plugin_types)
         initialized_plugin_types.extend(types)
@@ -160,12 +162,22 @@ def ensure_rpp_layout(
     paths["home"].mkdir(parents=True, exist_ok=True)
     paths["descriptions"].mkdir(parents=True, exist_ok=True)
     paths["interfaces"].mkdir(parents=True, exist_ok=True)
-    paths["registry"].parent.mkdir(parents=True, exist_ok=True)
+    paths["registry"].mkdir(parents=True, exist_ok=True)
     paths["libraries"].mkdir(parents=True, exist_ok=True)
 
     init_marker_path = paths["home"] / rp.INITIALIZED_MARKER_FILENAME
     if init_marker_path.exists() and not override_initialization:
         return
+
+    if override_initialization:
+        if init_marker_path.exists():
+            init_marker_path.unlink()
+        for path in [paths["descriptions"], paths["interfaces"], paths["registry"], paths["libraries"]]:
+            if path.exists() and path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            path.mkdir(parents=True, exist_ok=True)
+
+    print(f"Initializing RPP home at: {paths['home']}. This may take a while...")
 
     initialized_plugins = _initialize_common_plugins(paths, common_plugins_dir, init_anot_only=init_anot_only)
 
@@ -195,21 +207,8 @@ def validate_unique_plugin_id(requested_id: str, plugins: Dict[str, Any]) -> boo
         return False
     return True
 
-
-def validate_unique_class_name(class_name: Optional[str], plugin_id: str, plugins: Dict[str, Any]) -> bool:
-    if not class_name:
-        return
-    for existing_id, existing_data in plugins.items():
-        if existing_id == plugin_id:
-            continue
-        if existing_data.get("ClassName") == class_name:
-            return False
-    return True
-
 def register_plugin_type(
-    desc: PluginTypeInfo,
-    registry = None
-) -> dict[str, Any]:
+        desc: PluginTypeInfo, registry: dict[str, Any]) -> dict[str, Any]:
 
     info = desc.info
     library = info.get("Library")
@@ -224,11 +223,6 @@ def register_plugin_type(
     if not registry_id:
         raise ValueError("Description does not include Plugin.PluginTypeName")
 
-    save_registry = False
-    if registry is None:
-        registry = load_registry()
-        save_registry = True
-
     plugins = registry.setdefault(LIBRARY_PLUGIN_TYPES_KEY, {})
 
     register_result = register_plugin_type_dispatch(desc)
@@ -237,17 +231,17 @@ def register_plugin_type(
     desc.register_data = register_result.register_data
     scaffold_and_generate_from_description(desc)
 
-
-
     entry = desc.info
     if desc.validation_data:
         entry = {**entry, **desc.validation_data.as_dict()}
     if desc.register_data:
         entry = {**entry, **desc.register_data.as_dict()}
 
-    plugins[registry_id] = entry
-    if save_registry:
-        write_json(rp.get_app_registry_plugin_types_json_path(), registry)
+    plugin_type_path = \
+        rp.get_app_registry_plugin_type_json_path(
+            desc.info.get("PluginTypeName"))
+    write_json(plugin_type_path, entry, indent=2, sort_keys=False)
+    plugins[registry_id] = build_registry_plugin_type_entry(desc.info)
     return entry
 
 
@@ -304,16 +298,16 @@ def register_plugin_type_from_source(source_file: Path,
         if not interface:
             raise ValueError(f"Interface '{plugin_desc.interface_name}' not found for plugin '{plugin_desc.plugin_type_name}' in file '{source_path}'.")
 
-        info = build_plugin_type_info_payload(plugin_desc, interface, source_path)
 
         if whitelist_plugins is not None \
-                and f"{library}::{info.get('Name')}" not in whitelist_plugins:
+                and f"{library}::{plugin_desc.plugin_name}" not in whitelist_plugins:
             continue  # Skip this plugin type if it's not in the whitelist
+
+        info = build_plugin_type_info_payload(plugin_desc, interface, source_path)
+        apply_library_context_to_plugin_type(info, library)
 
         # structs are autogenerated from register_plugin_type_supporting_file bellow
         plugin_type_info = PluginTypeInfo(info=info, parse_data=parse_result.data)
-
-        apply_library_context_to_plugin_type(plugin_type_info.info, library)
         validation_result = validate_plugin_type(plugin_type_info, plugin_types)
         if not validation_result.is_valid:
             raise ValueError(f"Validation failed for plugin type '{plugin_type_info.info.get('PluginTypeName')}': {validation_result.message}")
@@ -326,7 +320,7 @@ def register_plugin_type_from_source(source_file: Path,
         info = register_plugin_type(plugin_desc, registry=registry)
         ret_plugins.append(info)
 
-    write_json(rp.get_app_registry_plugin_types_json_path(), registry)
+    write_json(rp.get_app_registry_json_path(), registry)
     return ret_plugins
 
 
@@ -350,11 +344,12 @@ def unregister_plugin_type(plugin_id: str, registry_path: Path, library: str) ->
 def validate_plugin_type(plugin_type_info: PluginTypeInfo, plugin_types: Dict[str, Any]) -> PluginTypeValidationResult:
 
     registry_id = plugin_type_info.info.get("PluginTypeName")
-    class_name = plugin_type_info.info.get("ClassName")
-    ok = validate_unique_plugin_id(registry_id, plugin_types) \
-         and validate_unique_class_name(class_name, registry_id, plugin_types)
+
+    ok = validate_unique_plugin_id(registry_id, plugin_types)
 
     if not ok:
+        print(plugin_types.keys())
+        print(registry_id)
         return PluginTypeValidationResult(
             is_valid=False,
             message=f"Plugin type '{registry_id}' is not unique in the registry.",

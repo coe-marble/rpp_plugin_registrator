@@ -161,6 +161,7 @@ class ParsePluginTypeData:
     interfaces: Dict[str, InterfaceInfo] = None
     structs: Dict[str, StructInfo] = None
     parse_errors: Optional[List[str]] = None
+    dependencies: List[str] = None
 
 @dataclass(frozen=True)
 class ParsePluginTypeResult:

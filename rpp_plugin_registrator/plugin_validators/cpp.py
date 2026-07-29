@@ -45,8 +45,8 @@ def extract_plugin_type(desc, plugin_types) -> str | None:
 def make_fully_qualified_class_name_with_lib(fully_qualified_class_name: str, library_name: str) -> str:
     return f"{library_name}::{fully_qualified_class_name}"
 
-def validate_cpp_plugin(desc: PluginInfo,
-        plugin_types: Dict[str, PluginTypeInfo], persist_compiled_files: bool = False, **kwargs) -> Dict[str, Any]:
+def validate_cpp_plugin(desc: PluginInfo, plugin_types: Dict[str, PluginTypeInfo],
+        desired_library: str | None = None, persist_compiled_files: bool = False, **kwargs) -> Dict[str, Any]:
     """Validate a C++ plugin class and return validation data."""
     source_file = desc.info.get("SourceFile")
     class_name = desc.info.get("ClassName")
@@ -66,10 +66,12 @@ def validate_cpp_plugin(desc: PluginInfo,
     cmd = []
     try:
         compile_error, cmd, _ = compile_cpp_plugin(
-            plugin_info=desc,
+            source_file=source_file,
+            library_name=desired_library,
             plugin_type_name=plugin_type,
             plugin_type_library=plugin_type_info.get("Library"),
             out_dir=tmp_out_dir,
+            class_name=class_name,
             suppress_warnings=suppress_warnings
         )
         if compile_error:

@@ -30,8 +30,8 @@ def unsucessful_plugin_type_early_return(message: str) -> PluginTypeValidationRe
         validation_data=None
     )
 
-def validate_plugin(desc: PluginInfo,
-        plugin_types: Dict[str, Any], persist_compiled_files: bool = False) -> PluginValidationResult:
+def validate_plugin(desc: PluginInfo, plugin_types: Dict[str, Any],
+        desired_library: str | None = None,persist_compiled_files: bool = False) -> PluginValidationResult:
     """Validate plugin class by inferring language from file extension."""
     source_file = desc.info.get("SourceFile")
     if isinstance(source_file, str):
@@ -44,9 +44,11 @@ def validate_plugin(desc: PluginInfo,
 
     try:
         if suffix == ".py":
-            return validate_python_plugin(desc, plugin_types, persist_compiled_files=persist_compiled_files)
-        elif suffix in {".cpp", ".hpp", ".h"}:
-            return validate_cpp_plugin(desc, plugin_types, persist_compiled_files=persist_compiled_files)
+            return validate_python_plugin(desc, plugin_types,
+                desired_library=desired_library, persist_compiled_files=persist_compiled_files)
+        elif suffix in {".cpp", ".c", ".hpp", ".h"}:
+            return validate_cpp_plugin(desc, plugin_types,
+                desired_library=desired_library, persist_compiled_files=persist_compiled_files)
     except Exception as e:
         return unsucessful_plugin_early_return(f"Error during plugin validation: {str(e)}")
 

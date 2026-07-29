@@ -65,6 +65,31 @@ def variant_active_value(variant, variant_text, variant_type):
     pure_type = active_type.unqualified()
     return variant.address.cast(pure_type.pointer()).dereference()
 
+
+def normalize_type(t):
+
+    if "basic_string" in t:
+        return "string"
+
+    if t in ("long", "long int", "int64_t"):
+        return "int"
+    if t in ("float", "float32", "float64", "double"):
+        return "float"
+    if t == "bool":
+        return "bool"
+    if t == "void":
+        return "void"
+    if t in ("object", "Object") \\
+        or "std::map" in t \\
+        or "std::unordered_map" in t:
+        return "object"
+    if t in ("array", "Array", "list") \\
+        or "std::vector" in t \\
+        or "std::list" in t:
+        return "array"
+    return t
+
+
 # ============================================================
 # primitive conversion
 # ============================================================
@@ -72,39 +97,19 @@ def variant_active_value(variant, variant_text, variant_type):
 def convert_primitive(value):
 
     t = str(value.type)
-
+    t = normalize_type(t)
 
     if t == "bool":
         return bool(value)
-
-
-    if t in ("long", "long int"):
+    if t == "int":
         return int(value)
-
-
-    if t == "double":
+    if t == "float":
         return float(value)
-
-
-    if "basic_string" in t:
+    if t == "string":
         return read_string(value)
-
-
-    return value
-
-
-
-def normalize_type(t):
-
-    if "basic_string" in t:
-        return "string"
-
-    if t in ("long", "long int"):
-        return "int64_t"
-
-    return t
-
-
+    if t == "void":
+        return None
+    raise RuntimeError(f"Unknown primitive type: {{t}}")
 
 # ============================================================
 # ParameterValue parser
@@ -154,7 +159,6 @@ def parse_parameter_value(name, parameter_value):
         # The printer child is the actual vector
         vec = variant_active_value(variant, variant_text, "array")
 
-
         elements = []
 
         for i, element in enumerate(
@@ -171,9 +175,9 @@ def parse_parameter_value(name, parameter_value):
 
         return {{
             "name": name,
-            "type": "Array",
+            "type": "array",
             "element_type": (
-                elements[0]["type"]
+                normalize_type(elements[0]["type"])
                 if elements
                 else None
             ),
@@ -203,7 +207,7 @@ def parse_parameter_value(name, parameter_value):
 
         return {{
             "name": name,
-            "type": "Object",
+            "type": "object",
             "fields": fields,
         }}
 
@@ -218,8 +222,8 @@ def parse_plugin_source(symbol):
 
 
     result = {{
-        "parameters": {{}},
-        "components": {{}}
+        "Parameters": {{}},
+        "Components": {{}}
     }}
 
     try:
@@ -233,7 +237,7 @@ def parse_plugin_source(symbol):
                 param["name"]
             )
 
-            result["parameters"][name] = parse_parameter_value(
+            result["Parameters"][name] = parse_parameter_value(
                 name,
                 param["defaultValue"]
             )
@@ -249,7 +253,7 @@ def parse_plugin_source(symbol):
         )
 
         for key, value in iterate_map(components):
-            result["components"][key] = read_string(value)
+            result["Components"][key] = read_string(value)
     except Exception as e:
         msg = str(e)
         if not "There is no field named COMPONENTS" in msg:

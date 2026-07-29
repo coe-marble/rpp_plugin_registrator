@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import xml.etree.ElementTree as ET
 
 from tree_sitter import Language, Parser
 import tree_sitter_cpp as ts_cpp
@@ -13,58 +12,6 @@ from .core import (
     ParsePluginData,
     ParsePluginResult,
 )
-
-
-import subprocess
-import shutil
-
-from rpp_plugin_registrator.registry_paths import get_app_interfaces_path
-
-
-def get_cpp_imports_for_rpp() -> List[str]:
-    interfaces = get_app_interfaces_path()
-
-    rpp_cpp_path = Path(__file__).parent.parent.parent.parent / "rpp_cpp" / "include"
-
-    return [str(Path(interfaces) / "cpp"), str(rpp_cpp_path)]
-
-
-
-
-def legacy_castxml(source_file: Path) -> ParsePluginResult:
-    castxml_path = shutil.which("castxml")
-
-    tmp_file = Path(source_file.parent) / (source_file.stem + "_castxml.xml")
-
-    imports = get_cpp_imports_for_rpp()
-    command = [
-        castxml_path,
-        "--castxml-cc-gnu", "g++",
-        "--castxml-gccxml",
-        "-o", str(tmp_file.resolve()),
-        # Clang flags to prevent errors due to missing headers:
-        "-m64",  # or -m32 depending on the system
-        "-Xclang", "-fallow-half-arguments-and-returns",
-        "-Wno-everything", # Disable all warnings
-
-        *[f"-I{import_path}" for import_path in imports],
-        str(source_file)
-    ]
-    try:
-        subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=source_file.parent)
-    except (subprocess.CalledProcessError, OSError) as e:
-        full_command = " ".join(command)
-        error_msg = f"Failed to run castxml on {source_file}.\nFull command: {full_command}\nError: {e}"
-        return early_unsuccessful_return(source_file, error_msg)
-
-    # load the XML output and parse it to extract plugin information
-    try:
-        tree = ET.parse(tmp_file)
-        _ = tree.getroot()
-    except ET.ParseError as e:
-        return early_unsuccessful_return(
-            source_file, f"Failed to parse XML output from castxml: {e}")
-
 
 
 def early_unsuccessful_return(source_file: Path, error_message: str) -> ParsePluginResult:

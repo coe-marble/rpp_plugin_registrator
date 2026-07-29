@@ -21,6 +21,7 @@ class ${class_name}_Adapter_Client
 private:
     std::unique_ptr<capnp::EzRpcClient> client_;
     ::schema::${lib_name}::${class_name}::Client backend_;
+    std::shared_ptr<rpp::ClientAdapterParams> params_;
     std::string host_;
     uint16_t port_;
     rpp::ClientAdapterInfo info_;
@@ -28,7 +29,8 @@ private:
 public:
     explicit ${class_name}_Adapter_Client()
         : client_(nullptr),
-        backend_(nullptr)
+        backend_(nullptr),
+        params_(nullptr)
     {
         port_ = 0;
         info_.plugin_name = "${lib_name}::{class_name}";
@@ -41,6 +43,7 @@ public:
         if (!params) {
             throw std::invalid_argument("Params cannot be null");
         }
+        params_ = params;
         info_.name = params->name;
         host_ = params->host;
         port_ = params->port;

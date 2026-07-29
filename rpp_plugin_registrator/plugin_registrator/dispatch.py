@@ -68,9 +68,9 @@ def generate_plugin_type_interface(plugin_type_info: PluginTypeInfo, languages: 
     is_supporting_file = plugin_type_info.info.get("IsSupportingFile", False)
     if not is_supporting_file:
         if "python" in languages or "all" in languages:
-            generate_python_plugin_interface(plugin_type_info.info)
+            generate_python_plugin_interface(plugin_type_info)
         if "cpp" in languages or "all" in languages:
-            generate_cpp_plugin_interface(plugin_type_info.info)
+            generate_cpp_plugin_interface(plugin_type_info)
 
 def remove_plugin_type_interface(plugin_type_info: Dict[str, str], languages: list = None) -> None:
     if languages is None:

@@ -13,6 +13,7 @@ SOURCE_TEMPLATE = """
 #include "capnp_gen/${lib_name}/${generated_h}"
 #include "rpp_cpp/adapter_info.hpp"
 #include "rpp_cpp/capnp_server.hpp"
+#include "rpp_cpp/context.hpp"
 
 namespace ${lib_name}::hidden{
 
@@ -24,8 +25,9 @@ class ${class_name}_Adapter_Server
 private:
     std::string host_;
     uint16_t port_;
-    std::shared_ptr<${lib_name}::${class_name}> backend_;
+    ${lib_name}::${class_name}* backend_;
     std::unique_ptr<rpp::runtime::CapnpServer> rpc_server_ = nullptr;
+    std::shared_ptr<rpp::ServerAdapterParams> params_;
     rpp::ServerAdapterInfo info_;
 
 public:
@@ -33,7 +35,8 @@ public:
         : host_(""),
         port_(0),
         backend_(nullptr),
-        rpc_server_(nullptr)
+        rpc_server_(nullptr),
+        params_(nullptr)
     {
         info_.plugin_type = "${plugin_type_name}";
         info_.created_at = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -58,9 +61,10 @@ public:
         if (!params) {
             throw std::invalid_argument("Params cannot be null");
         }
+        params_ = params;
         info_.name = params->name;
         info_.plugin_name = params->plugin_name;
-        backend_ = std::dynamic_pointer_cast<${lib_name}::${class_name}>(params->backend);
+        backend_ = dynamic_cast<${lib_name}::${class_name}*>(params->backend.get());
         host_ = params->host;
         port_ = params->port;
         return true;
@@ -76,6 +80,7 @@ public:
 
     virtual ~${class_name}_Adapter_Server() noexcept = default;
 
+    virtual void initialize(const rpp::ComponentContext& /*context */) {{}}
 ${methods_string}
 };
 

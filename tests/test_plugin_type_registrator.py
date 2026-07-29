@@ -11,7 +11,7 @@ import subprocess
 from rpp_plugin_registrator.library_manager import LibraryManager
 from rpp_plugin_registrator.plugin_registrator.cpp import get_tmp_dir_for_compilation
 import rpp_plugin_registrator.plugin_type_registrator as registry_api
-from rpp_plugin_registrator import registry_paths as rp
+from rpp_plugin_registrator import registry_config as rp
 
 
 class PluginTypeRegistratorTests(unittest.TestCase):
@@ -27,15 +27,13 @@ class PluginTypeRegistratorTests(unittest.TestCase):
 
         # dissable scaffolding
         import rpp_plugin_registrator.plugin_type_registrator
-        self.original_scaffold_languages = \
-            rpp_plugin_registrator.plugin_type_registrator.SCAFFOLD_LANGUAGES
         rpp_plugin_registrator.plugin_type_registrator.SCAFFOLD_LANGUAGES = []
 
 
     def tearDown(self):
         import rpp_plugin_registrator.plugin_descriptors.capnp
         rpp_plugin_registrator.plugin_descriptors.capnp.PLUGIN_ANNOTATION_ID = self.original_annotation_id
-        rpp_plugin_registrator.plugin_type_registrator.SCAFFOLD_LANGUAGES = self.original_scaffold_languages
+        rpp_plugin_registrator.plugin_type_registrator.reset_module()
         self._clear_capnproto_cache()
 
 
@@ -91,12 +89,14 @@ annotation plugin @0xabcd000000000000(interface) :Text;
 
 
     def _write_capnp_plugin_source(self, path: Path, class_name: str, tag: str,
-                                   plugin_name: str, id=1) -> None:
+                                   plugin_name: str, anot_library_name=None, id=1) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        if anot_library_name is None:
+            anot_library_name = "rpp_common"
         path.write_text(
             (f"""
 @0xaaaaaaaa0000000{id};
-using Anot = import "rpp_common/anot.capnp";
+using Anot = import "{anot_library_name}/anot.capnp";
 
 interface {class_name} $Anot.plugin("{plugin_name}"){{
   {tag}   @0 () -> ();
@@ -115,10 +115,10 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / ".rpp"
             with self._temp_rpp_home(home):
-                resolved = rp.get_app_registry_plugin_types_json_path()
+                resolved = rp.get_app_registry_json_path()
                 self.assertEqual(
                     resolved,
-                    (home / "registry" / "rpp_plugin_types.registry.json").resolve(),
+                    (home / "registry" / "rpp_plugin_types.json").resolve(),
                 )
 
     def test_load_registry_returns_default_payload_when_missing(self):
@@ -146,10 +146,10 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
             temp_root = Path(td)
             common_plugins_dir = temp_root / "common_plugins"
             self._write_capnp_anot_source(common_plugins_dir / "anot.capnp")
-            self._write_capnp_plugin_source(common_plugins_dir / "Controller.capnp", "Controller", "ctl", "controller", id="1")
+            self._write_capnp_plugin_source(common_plugins_dir / "Controller.capnp", "Controller", "ctl", "controller", anot_library_name="common_plugins", id="1")
             self._write_capnp_plugin_source(
                 common_plugins_dir / "Estimator.capnp", "Estimator", "est", "estimator",
-                id="2") # Avoid duplicate annotation ID conflict for test
+                anot_library_name="common_plugins", id="2") # Avoid duplicate annotation ID conflict for test
 
             with self._temp_rpp_home(temp_root / ".rpp"):
                 paths = registry_api.get_rpp_paths()
@@ -159,21 +159,22 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
                 self.assertTrue(marker_path.exists())
                 marker_payload = json.loads(marker_path.read_text(encoding="utf-8"))
                 self.assertTrue(marker_payload["Initialized"])
-                self.assertEqual(set(marker_payload["InitializedPlugins"]), {"rpp_common::Controller", "rpp_common::Estimator"})
+                self.assertEqual(set(marker_payload["InitializedPlugins"]), {"common_plugins::Controller", "common_plugins::Estimator"})
 
                 registry_payload = registry_api.load_registry()
-                self.assertIn("rpp_common::Controller", registry_payload["PluginTypes"])
-                self.assertIn("rpp_common::Estimator", registry_payload["PluginTypes"])
-                self.assertEqual(registry_payload["PluginTypes"]["rpp_common::Controller"]["Library"], "rpp_common")
-                self.assertEqual(registry_payload["PluginTypes"]["rpp_common::Estimator"]["Library"], "rpp_common")
+                self.assertIn("common_plugins::Controller", registry_payload["PluginTypes"])
+                self.assertIn("common_plugins::Estimator", registry_payload["PluginTypes"])
+                self.assertEqual(registry_payload["PluginTypes"]["common_plugins::Controller"]["Library"], "common_plugins")
+                self.assertEqual(registry_payload["PluginTypes"]["common_plugins::Estimator"]["Library"], "common_plugins")
 
-                rpp_library_path = paths["libraries"] / "rpp_common"
+                rpp_library_path = paths["libraries"] / "common_plugins"
                 self.assertTrue((rpp_library_path / "package.json").exists())
                 self.assertTrue((rpp_library_path / "plugins.json").exists())
-                self.assertTrue((rpp_library_path / "autogen" / "manifest.json").exists())
 
-                manifest_payload = json.loads((rpp_library_path / "autogen" / "manifest.json").read_text(encoding="utf-8"))
-                self.assertEqual(manifest_payload["Library"], "rpp_common")
+                manifest_path = rp.get_app_library_manifest_path_json("common_plugins")
+                self.assertTrue(manifest_path.exists())
+                manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                self.assertEqual(manifest_payload["Library"], "common_plugins")
 
                 registry_api.ensure_rpp_layout(common_plugins_dir=common_plugins_dir)
                 registry_payload_second = registry_api.load_registry()
@@ -186,7 +187,8 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
         with tempfile.TemporaryDirectory() as td:
             temp_root = Path(td)
             common_plugins_dir = temp_root / "common_plugins"
-            self._write_capnp_plugin_source(common_plugins_dir / "Controller.capnp", "Controller", "ctl", "controller", id="3")
+            self._write_capnp_plugin_source(common_plugins_dir / "Controller.capnp",
+                    "Controller", "ctl", "controller", anot_library_name="common_plugins", id="3")
             self._write_capnp_anot_source(common_plugins_dir / "anot.capnp")
 
             with self._temp_rpp_home(temp_root / ".rpp"):
@@ -194,19 +196,19 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
                 paths = registry_api.get_rpp_paths()
 
                 registry_payload = registry_api.load_registry()
-                self.assertIn("rpp_common::Controller", registry_payload["PluginTypes"])
+                self.assertIn("common_plugins::Controller", registry_payload["PluginTypes"])
 
-                del registry_payload["PluginTypes"]["rpp_common::Controller"]
-                registry_api.write_json(paths["registry"], registry_payload)
+                del registry_payload["PluginTypes"]["common_plugins::Controller"]
+                registry_api.write_json(rp.get_app_registry_json_path(), registry_payload)
 
                 registry_api.ensure_rpp_layout(
                     common_plugins_dir=common_plugins_dir,
                     override_initialization=True,
                 )
                 registry_payload_after_override = registry_api.load_registry()
-                self.assertIn("rpp_common::Controller", registry_payload_after_override["PluginTypes"])
-                rpp_library_path = paths["libraries"] / "rpp_common"
-                self.assertTrue((rpp_library_path / "autogen" / "manifest.json").exists())
+                self.assertIn("common_plugins::Controller", registry_payload_after_override["PluginTypes"])
+                manifest_path = rp.get_app_library_manifest_path_json("common_plugins")
+                self.assertTrue(manifest_path.exists())
 
     def test_resolve_output_path_uses_override_or_default(self):
         with tempfile.TemporaryDirectory() as td:
@@ -224,7 +226,7 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
     def test_get_plugin_types(self):
         with tempfile.TemporaryDirectory() as td:
             with self._temp_rpp_home(Path(td) / ".rpp"):
-                registry_path = rp.get_app_registry_plugin_types_json_path()
+                registry_path = rp.get_app_registry_json_path()
                 registry_path.parent.mkdir(parents=True, exist_ok=True)
                 registry_path.write_text(
                     json.dumps(
@@ -251,7 +253,7 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
             with self._temp_rpp_home(Path(td) / ".rpp"):
                 temp_root = Path(td)
                 source_path = temp_root / "plugins" / "EchoPlugin.capnp"
-                registry_path = rp.get_app_registry_plugin_types_json_path()
+                registry_path = rp.get_app_registry_json_path()
 
                 self._write_capnp_plugin_source(
                     path=source_path,
@@ -292,7 +294,7 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
             with self._temp_rpp_home(Path(td) / ".rpp"):
                 temp_root = Path(td)
                 source_path = temp_root / "plugins" / "EchoPlugin.capnp"
-                registry_path = rp.get_app_registry_plugin_types_json_path()
+                registry_path = rp.get_app_registry_json_path()
 
                 self._write_capnp_plugin_source(
                     path=source_path,
@@ -321,10 +323,12 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
                 plugin_types = payload["PluginTypes"]
                 self.assertTrue(any(pt["ClassName"] == "EchoPlugin" for pt in plugin_types.values()))
 
+                path = rp.get_app_registry_plugin_type_json_path(entry["PluginTypeName"])
+                self.assertTrue(path.exists())
+
                 interfaces_path = rp.get_app_capnp_interfaces_path()
                 lib_interfaces_path = Path(interfaces_path) / self.TEST_LIBRARY
                 registered_capnp_file_exists = (lib_interfaces_path / source_path.name).exists()
-
                 self.assertTrue(registered_capnp_file_exists)
                 self.assertEqual(entry["Library"], self.TEST_LIBRARY)
 
@@ -382,7 +386,7 @@ interface12 InvalidPlugin {
         with tempfile.TemporaryDirectory() as td:
             with self._temp_rpp_home(Path(td) / ".rpp"):
                 temp_root = Path(td)
-                registry_path = rp.get_app_registry_plugin_types_json_path()
+                registry_path = rp.get_app_registry_json_path()
                 first_source = temp_root / "plugins" / "FirstPlugin.capnp"
                 second_source = temp_root / "plugins" / "SecondPlugin.capnp"
 
@@ -459,7 +463,7 @@ interface12 InvalidPlugin {
         with tempfile.TemporaryDirectory() as td:
             with self._temp_rpp_home(Path(td) / ".rpp"):
                 temp_root = Path(td)
-                registry_path = rp.get_app_registry_plugin_types_json_path()
+                registry_path = rp.get_app_registry_json_path()
                 source_path = temp_root / "plugins" / "ItemPlugin.capnp"
                 self._write_capnp_plugin_source(
                     source_path,
@@ -512,20 +516,28 @@ class ScaffoldTests(unittest.TestCase):
         self.registry_path = rp.RPP_HOME / "registry"
         import rpp_plugin_registrator.plugin_type_registrator as plugin_type_registrator
         self.registrator_module = plugin_type_registrator
-        self.old_scaffold_languages = plugin_type_registrator.SCAFFOLD_LANGUAGES
 
     def tearDown(self):
         rp.RPP_HOME = self._original_rpp_home
-        self.registrator_module.SCAFFOLD_LANGUAGES = self.old_scaffold_languages
+        self.registrator_module.reset_module()
         self.temp_dir.cleanup()
         subprocess.run = self.subprocess_run
+
+    def supporting_file_src(self):
+        return """
+@0xaaaaaaaa00000003;
+struct SupportingStruct {
+  value @0 :Float64;
+}
+"""
 
     def plugin_type_src1(self):
         return """
 @0xaaaaaaaa00000001;
 using Anot = import "rpp_common/anot.capnp";
+using Sup = import "secondlib/supporting_struct.capnp";
 interface MockControllerPlugin $Anot.plugin("mock_ctl") {
-  ctl1   @0 (b1: Bool) -> (b2: Bool);
+  ctl1   @0 (b1: Sup.SupportingStruct) -> (b2: Bool);
 }
 """
 
@@ -547,20 +559,33 @@ struct DisturbanceData {
 
     def test_scaffold_all_languages(self):
         lib_path = self.lib_h.path
+        self.registrator_module.SCAFFOLD_LANGUAGES = ["python", "cpp"]
+
+        second_lib = self.manager.get_or_create_plugin_library("secondlib")
+
+        source_path = second_lib.path / "plugins" / "supporting_struct.capnp"
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(self.supporting_file_src(), encoding="utf-8")
+        registry_api.register_plugin_type_from_source(
+            source_path,
+            library="secondlib",
+        )
+
         source_path = lib_path / "plugins" / "MockControllerPlugin.capnp"
         source_path.parent.mkdir(parents=True, exist_ok=True)
         source_path.write_text(self.plugin_type_src1(), encoding="utf-8")
-        self.registrator_module.SCAFFOLD_LANGUAGES = ["python", "cpp"]
-
-
 
         def create_so_file():
             class_name = "MockControllerPlugin"
             hpp_source_file = rp.get_app_interfaces_path() / "cpp" / "rpp_plugin_types" / "testlib" / f"{class_name}.hpp"
+            capnp_dir = rp.get_app_interfaces_path() / "cpp" / "capnp_gen" / 'testlib'
             tmp_out_dir = get_tmp_dir_for_compilation(str(hpp_source_file), class_name)
             path = tmp_out_dir / f"{class_name}.so"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("dummy shared object content", encoding="utf-8")
+            gen_source_path = capnp_dir / f"{class_name}.capnp.h"
+            gen_source_path.parent.mkdir(parents=True, exist_ok=True)
+            gen_source_path.write_text("dummy generated source content", encoding="utf-8")
             return subprocess.CompletedProcess(args=[], returncode=0)
 
         # mock subprocess.run to avoid actually calling capnp compile during the test
@@ -586,6 +611,18 @@ struct DisturbanceData {
 
         self.registrator_module.SCAFFOLD_LANGUAGES = ["python"]
         lib_path = self.lib_h.path
+
+        second_lib = self.manager.get_or_create_plugin_library("secondlib")
+
+        source_path = second_lib.path / "plugins" / "supporting_struct.capnp"
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(self.supporting_file_src(), encoding="utf-8")
+
+        registry_api.register_plugin_type_from_source(
+            source_path,
+            library="secondlib",
+        )
+
         source_path = lib_path / "plugins" / "MockControllerPlugin.capnp"
         source_path.parent.mkdir(parents=True, exist_ok=True)
         source_path.write_text(self.plugin_type_src1(), encoding="utf-8")
@@ -629,9 +666,20 @@ struct DisturbanceData {
     def test_scaffold_cpp1(self):
         self.registrator_module.SCAFFOLD_LANGUAGES = ["cpp"]
         lib_path = self.lib_h.path
+
+        second_lib = self.manager.get_or_create_plugin_library("secondlib")
+
+        source_path = second_lib.path / "plugins" / "supporting_struct.capnp"
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(self.supporting_file_src(), encoding="utf-8")
+        registry_api.register_plugin_type_from_source(
+            source_path,
+            library="secondlib",
+        )
+
+
         source_path = lib_path / "plugins" / "MockControllerPlugin.capnp"
         source_path.parent.mkdir(parents=True, exist_ok=True)
-
         source_path.write_text(self.plugin_type_src1(), encoding="utf-8")
         entries = registry_api.register_plugin_type_from_source(
             source_path,
@@ -642,14 +690,19 @@ struct DisturbanceData {
         self.assertTrue(gen_source_file.exists())
         self.assertFalse((self.python_scaffold_path / "rpp_plugin_types" / "testlib" / "MockControllerPlugin.py").exists())
 
-        self.assertTrue((self.cpp_scaffold_path / "capnp_gen" / "testlib" / "MockControllerPlugin.capnp.h").exists())
-        self.assertTrue((self.cpp_scaffold_path / "capnp_gen" / "testlib" / "MockControllerPlugin.capnp.c++").exists())
+        capnp_autogen_path = rp.get_app_interfaces_path() / "cpp" / "capnp_gen" / "testlib"
+        self.assertTrue((capnp_autogen_path / "MockControllerPlugin.capnp.h").exists())
+        self.assertTrue((capnp_autogen_path / "MockControllerPlugin.capnp.c++").exists())
 
         registry_path = rp.get_app_registry_path()
         shared_libs_path = registry_path / "cpp" / "shared" / "testlib" / "plugin_types"
         self.assertTrue(shared_libs_path.exists())
 
         self.assertTrue(any(f.suffix == ".so" for f in shared_libs_path.iterdir()))
+
+        capnp_h_file = capnp_autogen_path / "MockControllerPlugin.capnp.h"
+        content = capnp_h_file.read_text(encoding="utf-8")
+        self.assertIn('#include "capnp_gen/secondlib/supporting_struct.capnp.h"', content)
 
 
         loaded = gen_source_file.read_text(encoding="utf-8")
