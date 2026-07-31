@@ -446,26 +446,26 @@ class ComponentPlugin(MotionController2D):
         self.assertEqual(comps, {"ctl1": "TestLib::ComponentPlugin"})
 
         params = self.manager.get_plugin_parameters_from_lib("ComponentPlugin", "TestLib")
-        self.assertEqual(params["param1"], {"name": "param1", "default_value": 1.1, "type": "float64"})
-        self.assertEqual(params["param2"], {"name": "param2", "default_value": 2, "type": "int64"})
+        self.assertEqual(params["param1"], {"name": "param1", "default_value": 1.1, "type": "float"})
+        self.assertEqual(params["param2"], {"name": "param2", "default_value": 2, "type": "int"})
         self.assertEqual(params["param3"], {"name": "param3", "default_value": "default_string", "type": "string"})
         self.assertEqual(params["param4"], {"name": "param4", "default_value": True, "type": "bool"})
-        self.assertEqual(params["param5"]["type"], "list")
+        self.assertEqual(params["param5"]["type"], "array")
         self.assertEqual(params["param5"]["default_value"], [
-            {"name": "param5[0]", "default_value": 1, "type": "int64"},
-            {"name": "param5[1]", "default_value": 2, "type": "int64"},
-            {"name": "param5[2]", "default_value": 3, "type": "int64"},
+            {"name": "param5[0]", "default_value": 1, "type": "int"},
+            {"name": "param5[1]", "default_value": 2, "type": "int"},
+            {"name": "param5[2]", "default_value": 3, "type": "int"},
         ])
-        self.assertEqual(params["param5"]["element_type"], "int64")
-        self.assertEqual(params["param6"]["type"], "dict")
+        self.assertEqual(params["param5"]["element_type"], "int")
+        self.assertEqual(params["param6"]["type"], "object")
         self.assertEqual(params["param6"]["fields"], {
             "key1": {"name": "key1", "default_value": "value1", "type": "string"},
-            "key2": {"name": "key2", "default_value": 2, "type": "int64"},
+            "key2": {"name": "key2", "default_value": 2, "type": "int"},
         })
-        self.assertEqual(params["param7"]["type"], "dict")
+        self.assertEqual(params["param7"]["type"], "object")
         self.assertEqual(params["param7"]["fields"], {
-            "a": {"name": "a", "default_value": 10, "type": "int64"},
-            "b": {"name": "b", "default_value": 2, "type": "int64"},
+            "a": {"name": "a", "default_value": 10, "type": "int"},
+            "b": {"name": "b", "default_value": 2, "type": "int"},
         })
 
 class CppPluginRegistratorTests(unittest.TestCase):

@@ -19,6 +19,9 @@ from .templates.dummy_cpp_source_for_debug_symbols import DUMMY_CPP_SOURCE_FOR_D
 from .templates.gdb_analyze_source import GDB_ANALYZE_SOURCE_TEMPLATE
 
 
+RPP_CPP_PATH = Path(__file__).parent.parent.parent.parent / "rpp_cpp"
+
+
 def get_plugin_type_shared_library_flags(
         plugin_type_name: str) -> List[str]:
 
@@ -33,9 +36,8 @@ def get_plugin_type_shared_library_flags(
 
 def get_cpp_imports_for_rpp() -> List[str]:
     interfaces = get_app_interfaces_path()
-    rpp_cpp_path = Path(__file__).parent.parent.parent.parent / "rpp_cpp" / "include"
 
-    paths = [str(Path(interfaces) / "cpp"), str(rpp_cpp_path)]
+    paths = [str(Path(interfaces) / "cpp"), str(RPP_CPP_PATH / "include")]
     return paths
 
 def get_plugin_type_shared_library_path(
@@ -50,6 +52,7 @@ def get_dependency_source_files_for_compilation(plugin_type_library: str, depend
     capnp_generated_dir = Path(interfaces) / "cpp" / "capnp_gen" / plugin_type_library
 
     files = [str(f) for f in capnp_generated_dir.glob("*.c++") if f.is_file()]
+    files += [str(RPP_CPP_PATH / "src" / "plugin_runtime.capnp.c++")]
     for dep in dependencies:
         lib_name, file_name = dep
         potential_file = Path(interfaces) / "cpp" / "capnp_gen" / lib_name / f"{file_name}.c++"

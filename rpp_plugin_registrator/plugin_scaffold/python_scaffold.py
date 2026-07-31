@@ -219,9 +219,10 @@ def generate_plugin_adapter_client(description: PluginTypeInfo, scaffolded_file_
     content = f'''
 import capnp
 import rpp_py.capnp_schema as capnp_schema
-from rpp_py.capnp_runtime import CapnpRuntime
+from rpp_py.client_context import ClientContext
 from rpp_py.adapter_info import AdapterClientParams, AdapterClientInfo
 from rpp_plugin_types.{lib_name}.{class_name} import {class_name}
+from rpp_py.plugin_runtime import RuntimeConstants
 import asyncio
 {imports_str}
 
@@ -231,32 +232,39 @@ class {class_name}_AdapterClient({class_name}):
     def __init__(self):
         self._adapter_client_params: AdapterClientParams = None
         self._client = None
-        self._rpc_client = None
-        self._stream = None
+        self._runtime = None
 
     def configure_adapter_client__(self, adapter_client_params: AdapterClientParams):
         self._adapter_client_params = adapter_client_params
+        self._adapter_client_info = AdapterClientInfo()
+        self._adapter_client_info.plugin_name = adapter_client_params.plugin_name
+        self._adapter_client_info.name = adapter_client_params.name \\
+            if adapter_client_params.name else \\
+                f"{{adapter_client_params.plugin_name}}_adapter_client"
+        self._adapter_client_info.connection_name = adapter_client_params.connection_name \\
+            if adapter_client_params.connection_name else \\
+                f"{{adapter_client_params.plugin_name}}_connection"
 
-    async def connect_adapter_client__(self, runtime: CapnpRuntime):
+    async def connect_adapter_client__(self, context: ClientContext):
         if self._adapter_client_params is None:
             raise RuntimeError("Adapter client params is not configured. Please call configure_adapter_client__() first.")
-        host = self._adapter_client_params.host
-        port = self._adapter_client_params.port
-        self._runtime = runtime
-        self._stream = await capnp.AsyncIoStream.create_connection(host, port)
-        self._rpc_client = capnp.TwoPartyClient(self._stream)
-        client_class = capnp_schema.get_client_class("{plugin_type_name}", "{file_name}")
-        self._client = self._rpc_client.bootstrap().cast_as(client_class)
+        self._runtime = context.get_runtime()
+
+        runtime_class = RuntimeConstants.get_capnp_schema().PluginRuntime
+        try:
+            self._runtime_client = context.get_client().cast_as(runtime_class)
+            capability = await self._runtime_client.getComponentCapability(
+                self._adapter_client_info.connection_name)
+            interface_class = capnp_schema.get_client_class("{plugin_type_name}", "{file_name}")
+            self._client = capability.pluginRef.as_interface(interface_class)
+            return True
+        except Exception as e:
+            client_class = capnp_schema.get_client_class("{plugin_type_name}", "{file_name}")
+            self._client = context.get_client().cast_as(client_class)
 
     async def disconnect_adapter_client__(self):
-        if self._rpc_client:
-            self._rpc_client.close()
-        if self._stream:
-            self._stream.close()
         self._adapter_client_params = None
         self._client = None
-        self._rpc_client = None
-        self._stream = None
         self._runtime = None
 
     {methods_str}
@@ -307,22 +315,27 @@ class {class_name}_AdapterServer(capnp_schema.get_server_class("{plugin_type_nam
 
     def configure_adapter_server__(self, adapter_server_params: AdapterServerParams):
         self._adapter_server_params = adapter_server_params
-        self._adapter_server_info.name = adapter_server_params.name \
-            if adapter_server_params.name else f"{{adapter_server_params.plugin_name}}_adapter_server"
         self._adapter_server_info.plugin_name = adapter_server_params.plugin_name
+        self._adapter_server_info.name = adapter_server_params.name \\
+            if adapter_server_params.name else \\
+                f"{{adapter_server_params.plugin_name}}_adapter_server"
+        self._adapter_server_info.connection_name = adapter_server_params.connection_name \\
+            if adapter_server_params.connection_name else \\
+                f"{{adapter_server_params.plugin_name}}_connection"
         self._backend = adapter_server_params.backend
+
+    def create_capability_adapter_server__(self):
+        return capnp_schema.get_server_class("{plugin_type_name}", "{file_name}")
 
     async def handle_connection_adapter_server__(self, stream):
         self._rpc_server = capnp.TwoPartyServer(stream, bootstrap=self)
         await self._rpc_server.on_disconnect()
 
-    async def start_adapter_server__(self, runtime: CapnpRuntime):
+    async def start_adapter_server__(self, runtime: CapnpRuntime, host: str, port: int):
         self._runtime = runtime
         if self._adapter_server_params is None:
             raise RuntimeError("Adapter server params are not configured. " \\
                 + "Please call configure_adapter_server__() first.")
-        host = self._adapter_server_params.host
-        port = self._adapter_server_params.port
 
         self._asyncio_server = await capnp.AsyncIoStream.create_server( \\
                 self.handle_connection_adapter_server__, host, port)

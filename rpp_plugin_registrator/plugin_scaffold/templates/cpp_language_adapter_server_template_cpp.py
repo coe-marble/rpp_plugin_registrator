@@ -11,50 +11,47 @@ SOURCE_TEMPLATE = """
 #include <chrono>
 #include "rpp_cpp/plugin.hpp"
 #include "capnp_gen/${lib_name}/${generated_h}"
-#include "rpp_cpp/adapter_info.hpp"
+#include "rpp_cpp/adapter_bases.hpp"
 #include "rpp_cpp/capnp_server.hpp"
 #include "rpp_cpp/context.hpp"
 
 namespace ${lib_name}::hidden{
 
 class ${class_name}_Adapter_Server
-    : public ::schema::${lib_name}::${class_name}::Server,
-      public rpp::ServerAdapter
+    : public rpp::ServerAdapter,
+      public ::schema::${lib_name}::${class_name}::Server
 {
 
 private:
-    std::string host_;
-    uint16_t port_;
     ${lib_name}::${class_name}* backend_;
-    std::unique_ptr<rpp::runtime::CapnpServer> rpc_server_ = nullptr;
-    std::shared_ptr<rpp::ServerAdapterParams> params_;
+    std::shared_ptr<rpp::ServerAdapterParams> params_ = nullptr;
     rpp::ServerAdapterInfo info_;
+    std::unique_ptr<rpp::runtime::CapnpServer> rpc_server_ = nullptr;
 
 public:
+
     explicit ${class_name}_Adapter_Server()
-        : host_(""),
-        port_(0),
-        backend_(nullptr),
-        rpc_server_(nullptr),
-        params_(nullptr)
+        : backend_(nullptr)
     {
         info_.plugin_type = "${plugin_type_name}";
         info_.created_at = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch());
     }
 
-    void start_adapter_server__(kj::AsyncIoContext& io) override {
-        if (!backend_) {
-            throw std::runtime_error("RPC server is not initialized. Call configure_adapter_server__ first.");
-        }
+    capnp::Capability::Client create_capability_adapter_server__() override {
         kj::Own<::schema::${lib_name}::${class_name}::Server> owned_server(
             static_cast<::schema::${lib_name}::${class_name}::Server*>(this),
             kj::NullDisposer::instance
         );
+        return capnp::Capability::Client(std::move(owned_server));
+    }
 
-        auto server_cap = capnp::Capability::Client(std::move(owned_server));
-
-        rpc_server_ = std::make_unique<rpp::runtime::CapnpServer>(io, server_cap, host_, port_);
+    void start_adapter_server__(kj::AsyncIoContext& io, std::string host, uint16_t port) override {
+        if (!backend_) {
+            throw std::runtime_error("RPC server is not initialized. Call configure_adapter_server__ first.");
+        }
+        auto server_cap = create_capability_adapter_server__();
+        rpc_server_ = std::make_unique<rpp::runtime::CapnpServer>(io, host, port, server_cap);
     }
 
     bool configure_adapter_server__(std::shared_ptr<rpp::ServerAdapterParams> params) override {
@@ -64,9 +61,8 @@ public:
         params_ = params;
         info_.name = params->name;
         info_.plugin_name = params->plugin_name;
+        info_.connection_name = params->connection_name;
         backend_ = dynamic_cast<${lib_name}::${class_name}*>(params->backend.get());
-        host_ = params->host;
-        port_ = params->port;
         return true;
     }
 

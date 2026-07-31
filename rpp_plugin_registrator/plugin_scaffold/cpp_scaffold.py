@@ -130,12 +130,12 @@ def generate_methods_for_foreign_language_adapter_client(methods: list) -> str:
         )
         response_handling = ""
         if return_type == "void":
-            response_handling = "        request.send().wait(client_->getWaitScope());"
+            response_handling = "        request.send().wait(io_->waitScope);"
         elif len(method["Results"]) == 1:
-            response_handling = "        auto response = request.send().wait(client_->getWaitScope());\n"
+            response_handling = "        auto response = request.send().wait(io_->waitScope);\n"
             response_handling += f"        return {result_getters[0]};"
         else:
-            response_handling = "        auto response = request.send().wait(client_->getWaitScope());\n"
+            response_handling = "        auto response = request.send().wait(io_->waitScope);\n"
             response_handling += f"        return std::make_tuple({', '.join(result_getters)});"
 
         method_strings.append(
