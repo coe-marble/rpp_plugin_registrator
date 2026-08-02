@@ -1,7 +1,10 @@
+import os
+from datetime import datetime
+import shutil
+from pathlib import Path
 from PyQt6.QtWidgets import *
 from PyQt6 import uic, QtCore
-import sys, os
-from pathlib import Path
+from PyQt6.QtCore import QSignalBlocker
 from rpp_plugin_registrator.plugin_type_registrator import get_plugin_types
 from rpp_plugin_registrator.library_manager import LibraryManager
 from rpp_plugin_registrator.qt.qt_utils import do_in_thread, open_file_in_editor, open_folder
@@ -30,7 +33,8 @@ class NewLibraryDialog(QDialog):
         # hide whole row initially
         layout.labelForField(self.link_path_w).setVisible(False)
         self.link_path_w.setVisible(False)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok \
+            | QDialogButtonBox.StandardButton.Cancel, self)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
@@ -63,6 +67,33 @@ class NewLibraryDialog(QDialog):
         return [self.le.text(), self.is_linked.isChecked(), self.link_path.text()]
 
 class RPPPluginManager(QMainWindow):
+
+    def eventFilter(self, source, event):
+        if event.type() != event.Type.MouseButtonPress:
+            return False
+
+        if source is self.pluginTypesTreeView.viewport():
+            widget = self.pluginTypesTreeView
+            other_widget = self.pluginTableWidget
+        else:
+            widget = self.pluginTableWidget
+            other_widget = self.pluginTypesTreeView
+        click_position = event.position().toPoint()
+        item = widget.itemAt(click_position)
+
+        other_widget.clearSelection()
+        other_widget.setCurrentItem(None)
+
+        if item is None:
+            widget.clearSelection()
+            widget.setCurrentItem(None)
+            self._reset_views()
+
+        if source is self.pluginTableWidget.viewport():
+            self.clear_selected_plugins()
+
+        return super().eventFilter(source, event)
+
     def __init__(self, lib_manager : LibraryManager, parent=None):
         QMainWindow.__init__(self, parent=parent)
 
@@ -77,20 +108,27 @@ class RPPPluginManager(QMainWindow):
         self.libraryListWidget.setCurrentRow(0)
         self.do_in_progress = False
 
+        self.selected_item_type = None
+        self._reset_views()
+        self.select_library()
+
     def init(self):
         self.libraryListWidget.itemSelectionChanged.connect(self.on_library_selected)
         self.libraryListWidget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.pluginTypesTreeView.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.pluginTypesTreeView.itemDoubleClicked.connect(self.on_plugin_type_double_clicked)
+        self.pluginTypesTreeView.itemClicked.connect(self._on_plugin_type_row_clicked)
+        self.pluginTypesTreeView.viewport().installEventFilter(self)
         # self.pluginTypesTreeView.itemClicked.connect(self.on_plugin_type_selected)
         self._init_plugin_table()
 
         # on app click, remove active plugins
-        self.centralwidget.mousePressEvent = self.on_app_clicked
         self.openContextBtn.clicked.connect(self.open_context)
 
-        self.registerComponentBtn.clicked.connect(self.register_plugin)
-        self.unregisterComponentBtn.clicked.connect(self.unregister_plugin)
+        self.registerPluginBtn.clicked.connect(self.register_plugin)
+        self.registerPluginTypeBtn.clicked.connect(self.register_plugin_type)
+        self.unregisterBtn.clicked.connect(self.unregister_plugin_or_type)
+        self.refreshBtn.clicked.connect(self.refresh_plugin_or_type)
         self.refreshLibraryBtn.clicked.connect(self.refresh_library)
         self.unregisterLibraryBtn.clicked.connect(self.unregister_library)
         self.createLibraryBtn.clicked.connect(self.create_library)
@@ -100,40 +138,86 @@ class RPPPluginManager(QMainWindow):
         self.linkLibraryBtn.clicked.connect(self.link_library)
         self.detectLibrariesFromFolderBtn.clicked.connect(self.detect_libraries_from_folder)
 
-    def on_app_clicked(self, event):
-        self.clear_selected_plugins()
-
     def _init_plugin_table(self):
         self.pluginTableWidget = QTableWidget(self)
         self.pluginTableWidget.setColumnCount(5)
-        self.pluginTableWidget.setHorizontalHeaderLabels(["Name", "Plugin Name", "Plugin Type", "Library", "Description"])
+        self.pluginTableWidget.setHorizontalHeaderLabels(
+            ["Name", "Plugin Name", "Plugin Type", "Library", "Description"])
         self.pluginTableWidget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.pluginTableWidget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.pluginTableWidget.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.pluginTableWidget.setAlternatingRowColors(True)
         self.pluginTableWidget.horizontalHeader().setStretchLastSection(True)
         self.pluginTableWidget.itemDoubleClicked.connect(self.on_plugin_row_double_clicked)
+        self.pluginTableWidget.itemClicked.connect(self._on_plugin_row_clicked)
+        self.pluginTableWidget.viewport().installEventFilter(self)
 
         parent_layout = self.tabWidget.parentWidget().layout()
         parent_layout.replaceWidget(self.tabWidget, self.pluginTableWidget)
         self.tabWidget.hide()
 
-    def _current_library_name(self):
-        lib = self.get_active_library()
-        if lib is not None:
-            return lib
-        if self.libraryListWidget.count() > 0:
-            return self.libraryListWidget.item(0).text()
-        return None
+
+
+    def select_library(self, library_name=None):
+        if library_name is None:
+            item = self.libraryListWidget.item(0)
+            self.libraryListWidget.setCurrentItem(item)
+            self.libraryListWidget.itemClicked.emit(item)
+            return
+        for i in range(self.libraryListWidget.count()):
+            item = self.libraryListWidget.item(i)
+            if item.text() == library_name:
+                self.libraryListWidget.setCurrentItem(item)
+                self.libraryListWidget.itemClicked.emit(item)
+                return
+
+    def select_plugin(self, plugin_name):
+        for row in range(self.pluginTableWidget.rowCount()):
+            item = self.pluginTableWidget.item(row, 0)
+            data = item.data(QtCore.Qt.ItemDataRole.UserRole) if item is not None else None
+            if isinstance(data, dict) and data.get("PluginName", "") == plugin_name:
+                self.pluginTableWidget.setCurrentItem(item)
+                self.pluginTableWidget.itemClicked.emit(item)
+                return
+
+    def _reset_views(self):
+        self.selected_item_type = None
+        self.registerPluginBtn.setEnabled(True)
+        self.registerPluginTypeBtn.setEnabled(True)
+        # hide unregister buttons
+        self.unregisterBtn.setEnabled(False)
+        self.refreshBtn.setEnabled(False)
+
+    def _on_plugin_row_clicked(self, item):
+
+        with QSignalBlocker(self.pluginTypesTreeView):
+            self.pluginTypesTreeView.setCurrentItem(None)
+        self.unregisterBtn.setEnabled(True)
+        self.refreshBtn.setEnabled(True)
+        self.selected_item_type = "plugin"
+
+    def _on_plugin_type_row_clicked(self, item):
+        del item # unused variable
+        # Keep selection mutually exclusive between script component tree and workspace component tree.
+        with QSignalBlocker(self.pluginTableWidget):
+            self.pluginTableWidget.setCurrentItem(None)
+
+        self.unregisterBtn.setEnabled(True)
+        self.refreshBtn.setEnabled(True)
+        self.selected_item_type = "plugin_type"
 
     def refresh_plugin_types_list(self):
         self.pluginTypesTreeView.clear()
-        current_lib = self._current_library_name()
+        current_lib = self.get_active_library()
         if current_lib is None:
             return
 
         self.pluginTypesTreeView.setHeaderLabel(f"Plugin Types in Library '{current_lib}'")
-        for plugin_type in self.plugin_types.values():
+        plugin_types_sorted = sorted(
+            self.plugin_types.values(),
+            key=lambda x: x.get("PluginTypeName", "")
+        )
+        for plugin_type in plugin_types_sorted:
             lib = plugin_type.get("Library", None)
             if lib is None or lib != current_lib:
                 continue
@@ -146,11 +230,9 @@ class RPPPluginManager(QMainWindow):
             })
             self.pluginTypesTreeView.addTopLevelItem(item_child)
 
-        if self.pluginTypesTreeView.topLevelItemCount() > 0:
-            self.pluginTypesTreeView.setCurrentItem(self.pluginTypesTreeView.topLevelItem(0))
 
     def refresh_plugin_table(self):
-        current_lib = self._current_library_name()
+        current_lib = self.get_active_library()
         if current_lib is None:
             self.pluginTableWidget.setRowCount(0)
             return
@@ -159,7 +241,12 @@ class RPPPluginManager(QMainWindow):
         total_count = sum(len(plugins_of_type) for plugins_of_type in plugins.values())
         self.pluginTableWidget.setRowCount(total_count)
         row = 0
-        for plugin_type, plugins_of_type in plugins.items():
+
+        plugins_sorted = sorted(
+            [(plugin_type, plugins_of_type) for plugin_type, plugins_of_type in plugins.items()],
+            key=lambda x: x[0]
+        )
+        for plugin_type, plugins_of_type in plugins_sorted:
             for plugin in plugins_of_type:
                 name_item = QTableWidgetItem(plugin.get("Name", ""))
                 type_item = QTableWidgetItem(plugin.get("PluginType", ""))
@@ -179,17 +266,13 @@ class RPPPluginManager(QMainWindow):
         self.pluginTableWidget.resizeRowsToContents()
 
     def ask_library_path(self):
-
-        fileName, _ = QFileDialog.getOpenFileName(self, "Select Library File", "",
-                                                  "Shared Library File (*.json)")
-        # check that it is package.json
-        if fileName and (os.path.basename(fileName) == "package.json" \
-            or os.path.basename(fileName) == "plugins.json"):
-            return fileName
-        return None
+        library_folder = QFileDialog.getExistingDirectory(self, "Select Library Directory", "")
+        if not library_folder or not self.lib_manager.is_valid_plugin_library(library_folder):
+            self.log("Invalid library directory selected.")
+            return None
+        return library_folder
 
     def log(self, msg):
-        from datetime import datetime
         t_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         max_lines = 1000
         cursor = self.logTxt.textCursor()
@@ -205,9 +288,10 @@ class RPPPluginManager(QMainWindow):
         self.logTxt.setTextCursor(cursor)
         self.logTxt.insertPlainText(f"[{t_now}] {msg}\n")
 
+
     def register_plugin_library(self, path=None, link_install=False):
         if path is None:
-            path = Path(self.ask_library_path()).parent
+            path = Path(self.ask_library_path())
         if path is None:
             self.log("Invalid library file selected.")
             return
@@ -291,7 +375,6 @@ class RPPPluginManager(QMainWindow):
         self.log(f"Library '{lib}' exported to '{export_path}'.")
 
     def refresh_library(self):
-
         lib = self.get_active_library()
         if lib is None:
             QMessageBox.warning(self, "Warning", "No library selected.")
@@ -304,7 +387,7 @@ class RPPPluginManager(QMainWindow):
                 return
             self.log(f"Library '{lib}' refreshed.")
             self.load_plugins()
-            self.setEnabled(True)
+            self.select_library(lib)
 
         def run():
             QApplication.instance().processEvents()
@@ -312,14 +395,107 @@ class RPPPluginManager(QMainWindow):
 
         self._do_fn(run, on_finish)
 
-    def register_plugin(self):
-        lib = self.get_active_library()
-        if lib is None:
-            QMessageBox.warning(self, "Warning", "No library selected.")
+    def refresh_plugin_or_type(self):
+
+        if self.selected_item_type == "plugin":
+            selected_items = self.pluginTableWidget.selectedItems()
+            if not selected_items:
+                QMessageBox.warning(self, "Warning", "No plugin selected.")
+                return
+            name_item = selected_items[0]
+            plugin = name_item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if plugin is None:
+                QMessageBox.warning(self, "Warning", "No plugin selected.")
+                return
+        else:
+            QMessageBox.warning(self,
+                "Warning", "Plugin type refresh is not implemented yet.")
             return
+
+        lib = plugin.get("Library", None)
+        if lib is None:
+            QMessageBox.warning(self, "Warning", "Plugin library not found.")
+            return
+        lib_path = self.get_library_path_with_checks(lib)
+
+        self.log(f"Refreshing plugin '{plugin.get('PluginName', '')}'"
+            + f" in library '{lib}'. This may take a few moments...")
+
+        def on_finish(result, error):
+            if self.selected_item_type == "plugin":
+                if error is not None:
+                    self.log(f"Failed to refresh plugin '{plugin.get('PluginName', '')}'"
+                        + f" in library '{lib}': {error}")
+                    return
+                self.log(f"Plugin '{plugin.get('PluginName', '')}'"
+                         + f" refreshed in library '{lib}'.")
+            self.load_plugins()
+            self.select_library(lib)
+            self.select_plugin(plugin.get("PluginName", ""))
+
+        def run():
+            if self.selected_item_type == "plugin":
+                self.lib_manager.unregister_plugin(plugin.get("PluginName", ""),
+                    remove_from_json=False, throw_if_not_found=False)
+                full_path = Path(lib_path) / plugin.get("PluginPath", "")
+                self.lib_manager.register_plugin_from_source(full_path, lib)
+        self._do_fn(run, on_finish)
+
+
+    def register_plugin_type(self):
+        lib = self.get_active_library()
+        path = self.get_library_path_with_checks(lib)
+        # .m, .py or .slx files
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Plugin Type File", "",
+                                                  "Plugin Type Files (*.capnp)")
+        if not file_path:
+            self.log("No plugin type file selected.")
+            return
+
+        # open folder in file explorer, for all os
+        if not file_path.startswith(path):
+            # ask user to copy file to library path
+            reply = QMessageBox.question(self, 'Copy Plugin Type File',
+                                         f"The selected plugin type file is not in the library path.\n"
+                                         f"Do you want to copy it to the library '{lib}'?",
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                         QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            # copy file to library path
+            dest_path = os.path.join(path, 'src', os.path.basename(file_path))
+            shutil.copyfile(file_path, dest_path)
+            file_path = dest_path
+            self.log(f"Plugin type file '{file_path}' copied to library '{lib}'.")
+
+        full_plugin_path = file_path
+        if not self.lib_manager.is_supported_plugin_file(file_path):
+            self.log(f"Unsupported plugin type file type: '{file_path}'.")
+            return
+
+        def run():
+            self.lib_manager.register_plugin_from_source(full_plugin_path, lib)
+
+        self.log(f"Registering plugin type from '{file_path}' to library '{lib}'. This may take a few moments...")
+        def on_finish(result, error):
+            if error is not None:
+                self.log(f"Failed to register plugin type '{full_plugin_path}' in library '{lib}': {error}")
+                return
+            if result is False:
+                self.log(f"Failed to register plugin type '{full_plugin_path}' in library '{lib}'.")
+            else:
+                self.log(f"Plugin type '{full_plugin_path}' registered in library '{lib}'.")
+                self.load_plugins()
+
+        self._do_fn(run, on_finish)
+
+    def register_plugin(self):
+
+        lib = self.get_active_library()
+        path = self.get_library_path_with_checks(lib)
         # .m, .py or .slx files
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Plugin File", "",
-                                                  "Plugin Files (*.m *.py *.slx)")
+                                                  "Plugin Files (*.m *.py *.slx *.hpp *.cpp)")
         if not file_path:
             self.log("No plugin file selected.")
             return
@@ -330,12 +506,7 @@ class RPPPluginManager(QMainWindow):
             if not block_path:
                 self.log("Invalid Simulink block path.")
                 return
-        l = next((l for l in self.libraries if l['Name'] == lib), None)
-        if l is None:
-            QMessageBox.warning(self, "Warning", f"Library '{lib}' is not registered in the registry.")
-            return
         # open folder in file explorer, for all os
-        path = l.get('Path', None)
         if not file_path.startswith(path):
             # ask user to copy file to library path
             reply = QMessageBox.question(self, 'Copy Plugin File',
@@ -345,7 +516,6 @@ class RPPPluginManager(QMainWindow):
                                          QMessageBox.StandardButton.No)
             if reply != QMessageBox.StandardButton.Yes:
                 return
-            import shutil
             # copy file to library path
             dest_path = os.path.join(path, 'src', os.path.basename(file_path))
             shutil.copyfile(file_path, dest_path)
@@ -357,7 +527,7 @@ class RPPPluginManager(QMainWindow):
             full_plugin_path = f"{file_path}:{block_path}"
 
         if not self.lib_manager.is_supported_plugin_file(file_path):
-            self.log(f"Unsupported plugin file type: '{file_path}'. Only '*.py' files are supported with python backend.")
+            self.log(f"Unsupported plugin file type: '{file_path}'.")
             return
 
         def run():
@@ -395,7 +565,7 @@ class RPPPluginManager(QMainWindow):
                 on_finish(None, e)
         self.do_in_progress = False
 
-    def unregister_plugin(self):
+    def unregister_plugin_or_type(self):
         lib = self.get_active_library()
         if lib is None:
             QMessageBox.warning(self, "Warning", "No library selected.")
@@ -438,7 +608,7 @@ class RPPPluginManager(QMainWindow):
             try:
                 if p is not None and p.isVisible():
                     p.setStyleSheet("border: 1px solid transparent;")
-            except:
+            except Exception:
                 pass
 
 
@@ -474,22 +644,36 @@ class RPPPluginManager(QMainWindow):
     def _collect_plugin_types(self):
         return get_plugin_types()
 
+    def get_library_path_with_checks(self, lib_name):
+        if lib_name is None:
+            QMessageBox.warning(self, "Warning", "No library selected.")
+            return
+
+        l = next((l for l in self.libraries if l['Name'] == lib_name), None)
+        if l is None:
+            QMessageBox.warning(self, "Warning", f"Library '{lib_name}' is not registered in the registry.")
+            return
+        return l.get('Path')
+
+
     def open_plugin_file(self, plugin):
         path = plugin.get('PluginPath', "")
+        lib_path = self.lib_manager.get_library_path(plugin.get('Library', ""))
         if plugin["SourceLanguage"] == 'slx':
             path = path.split(':')[0]
             self.log(f"Cannot open Simulink plugin file '{path}' from here. " \
             "Please open it from MATLAB.")
             return
-        open_file_in_editor(path)
+        open_file_in_editor(Path(lib_path) / path)
 
     def open_context(self):
         lib = self.get_active_library()
         if lib is None:
             try:
                 lib = self.libraryListWidget.item(0).text()
-            except:
-                QMessageBox.warning(self, "Warning", "No library selected and no libraries available.")
+            except Exception:
+                QMessageBox.warning(self,
+                    "Warning", "No library selected and no libraries available.")
                 return
 
         l = next((l for l in self.libraries if l['Name'] == lib), None)
@@ -505,6 +689,7 @@ class RPPPluginManager(QMainWindow):
         self.open_plugin_file(plugin)
 
     def on_library_selected(self):
+        self._reset_views()
         self.refresh_plugin_types_list()
         self.refresh_plugin_table()
 
@@ -534,10 +719,12 @@ class RPPPluginManager(QMainWindow):
 
     def fill_data(self):
         self.libraryListWidget.clear()
-        for lib, p in self.plugins.items():
-            item = QListWidgetItem(lib)
+        sorted_libraries = sorted(self.libraries, key=lambda x: x['Name'])
+        for p in sorted_libraries:
+            item = QListWidgetItem(p['Name'])
             item.setData(QtCore.Qt.ItemDataRole.UserRole, p)
             self.libraryListWidget.addItem(item)
+
 
     def load_plugins(self):
         self.plugins = self.lib_manager.get_available_plugins()
@@ -546,4 +733,3 @@ class RPPPluginManager(QMainWindow):
         self.fill_data()
         self.refresh_plugin_types_list()
         self.refresh_plugin_table()
-

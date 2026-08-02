@@ -33,13 +33,13 @@ def register_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
         )
     return result
 
-def unregister_plugin(plugin_info: Dict[str, Any]) -> None:
+def unregister_plugin(plugin_info: Dict[str, Any]) -> bool:
     source_language = plugin_info["SourceLanguage"]
 
     if source_language == "python":
-        unregister_python_plugin(plugin_info)
+        return unregister_python_plugin(plugin_info)
     elif source_language == "cpp":
-        unregister_cpp_plugin(plugin_info)
+        return unregister_cpp_plugin(plugin_info)
     else:
         raise ValueError(f"No unregistrator available for source language '{source_language}'.")
 

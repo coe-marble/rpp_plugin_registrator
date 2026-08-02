@@ -475,7 +475,7 @@ class CppPluginRegistratorTests(unittest.TestCase):
         os.environ.pop("RPP_WHITELIST_PLUGIN_TYPES", None)  # Clean up the environment variable after the test
         rpp_plugin_registrator.registry_config.reset_module()
 
-    def test_register_cpp_plugin_with_components(self):
+    def test_register_cpp_plugin_with_components_then_unregister(self):
         with tempfile.TemporaryDirectory() as td:
 
             temp_root = Path(td)
@@ -509,8 +509,24 @@ class CppPluginRegistratorTests(unittest.TestCase):
                 str(plugin_path.resolve()),
             )
 
-            so_path = rp.get_app_registry_path() / "cpp" / "shared" / "TestLib" / "plugins" / "ComponentPluginSimpleCpp.so"
-            self.assertTrue(so_path.exists(), f"Expected shared library '{so_path}' does not exist.")
+
+            so_path = rp.get_app_registry_path() / "cpp" / "shared" / \
+                "TestLib" / "plugins" / "ComponentPluginSimpleCpp.so"
+            plugin_json_path = rp.get_app_registry_plugin_json_path(
+                "TestLib::ComponentPluginSimpleCpp")
+            self.assertTrue(so_path.exists(),
+                f"Expected shared library '{so_path}' does not exist.")
+            self.assertTrue(plugin_json_path.exists(),
+                f"Expected plugin source file '{plugin_json_path}' does not exist.")
+
+
+            manager.unregister_plugin("TestLib::ComponentPluginSimpleCpp")
+            self.assertNotIn("TestLib::ComponentPluginSimpleCpp",
+                manager.get_available_plugins().get("TestLib", {}))
+            self.assertFalse(so_path.exists(),
+                f"Shared library '{so_path}' should have been removed after unregistering the plugin.")
+            self.assertFalse(plugin_json_path.exists(),
+                f"Plugin source file '{abs_path}' should still exist after unregistering the plugin.")
 
 
     def test_register_cpp_plugin_with_using_namespace_and_type_aliasing(self):

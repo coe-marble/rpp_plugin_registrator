@@ -93,7 +93,7 @@ class LibraryManager:
         return os.path.join(library_path, LIBRARY_PLUGINS_FILENAME)
 
     @staticmethod
-    def _lib_name_from_path(library_path):
+    def lib_name_from_path(library_path):
         return Path(library_path).name
 
 
@@ -174,13 +174,13 @@ class LibraryManager:
             full_path = os.path.join(reg, n)
             manifest_file = None
             if os.path.isdir(full_path):
-                name = self._lib_name_from_path(full_path)
+                name = self.lib_name_from_path(full_path)
                 manifest_file = self._manifest_path(name)
             elif n.endswith('.json'):
                 with open(full_path, 'r', encoding=self.file_text_encoding) as f:
                     s = json5.load(f)
                     lib = s['Path']
-                    name = self._lib_name_from_path(lib)
+                    name = self.lib_name_from_path(lib)
                     manifest_file = self._manifest_path(name)
             if os.path.isfile(manifest_file):
                 with open(manifest_file, 'r', encoding=self.file_text_encoding) as f:
@@ -608,7 +608,7 @@ class LibraryManager:
 
     def load_lib_manifest(self, lib_path):
         """Load the manifest file for a library."""
-        lib_name = self._lib_name_from_path(lib_path)
+        lib_name = self.lib_name_from_path(lib_path)
         manifest_file = self._manifest_path(lib_name)
         if not os.path.isfile(manifest_file):
             raise ValueError(f"Library at '{lib_path}' does not contain a valid {LIBRARY_MANIFEST_FILENAME} file")
@@ -616,7 +616,7 @@ class LibraryManager:
 
     def save_lib_manifest(self, lib_path, manifest_data):
         """Save the manifest file for a library."""
-        lib_name = self._lib_name_from_path(lib_path)
+        lib_name = self.lib_name_from_path(lib_path)
         manifest_file = self._manifest_path(lib_name)
         write_json(Path(manifest_file), manifest_data, indent=4, sort_keys=False)
 
@@ -645,38 +645,66 @@ class LibraryManager:
 
         self.save_lib_manifest(lib_path, manifest_data)
 
-    def unregister_plugin(self, plugin_name, lib_name):
+    def unregister_plugin(self, plugin_name, lib_name=None,
+            remove_from_manifest=True, remove_from_json=True,
+            throw_if_not_found=True) -> None:
         """Unregister a plugin from a library."""
+        plugin_name, lib_name = \
+            self._resolve_plugin_name_and_library(plugin_name, lib_name)
+
         lib_path = self.get_library_path(lib_name)
         if not self.is_valid_plugin_library(lib_path):
             raise ValueError(f"Library '{lib_name}' is not a valid library")
 
-        manifest_data = self.load_lib_manifest(lib_path)
-        registry = self._manifest_plugins(manifest_data)
-        found = False
-        for comps in registry.values():
-            for comp in comps:
-                if comp['Name'] == plugin_name:
-                    comps.remove(comp)
+        try:
+            info: PluginInfo = self.get_plugin_info_from_lib(plugin_name, lib_name)
+        except ValueError as e:
+            if throw_if_not_found:
+                raise e
+            return
+        succ = p_reg_api.unregister_plugin(info)
+        if not succ:
+            raise ValueError(
+                f"Failed to unregister plugin '{plugin_name}' from library '{lib_name}'")
+
+        # unregister from manifest
+        if remove_from_manifest:
+            manifest_data = self.load_lib_manifest(lib_path)
+            registry = self._manifest_plugins(manifest_data)
+            found = False
+            if plugin_name in registry:
+                del registry[plugin_name]
+                found = True
+
+            if throw_if_not_found and not found:
+                raise ValueError(f"Plugin '{plugin_name}' not found in library '{lib_name}'")
+
+        if remove_from_json:
+            # unregister from plugins.json
+            plugins_file = self._plugins_path(lib_path)
+            plugins_data = load_json5(Path(plugins_file))
+            found = False
+            _, name = self.parse_plugin_name(plugin_name)
+            for comp in plugins_data.get(LIBRARY_PLUGINS_KEY, []):
+                if comp['Name'] == name:
+                    plugins_data[LIBRARY_PLUGINS_KEY].remove(comp)
                     found = True
                     break
-            if found:
-                break
-        if not found:
-            raise ValueError(f"Plugin '{plugin_name}' not found in library '{lib_name}'")
-        self.save_lib_manifest(lib_path, manifest_data)
 
-        plugins_file = self._plugins_path(lib_path)
-        plugins_data = load_json5(Path(plugins_file))
-        found = False
-        for comp in plugins_data.get(LIBRARY_PLUGINS_KEY, []):
-            if comp['Name'] == plugin_name:
-                plugins_data[LIBRARY_PLUGINS_KEY].remove(comp)
-                found = True
-                break
-        if not found:
-            raise ValueError(f"Plugin '{plugin_name}' not found in library '{lib_name}'")
-        write_json(Path(plugins_file), plugins_data, indent=4, sort_keys=False)
+            if throw_if_not_found and not found:
+                raise ValueError(f"Plugin '{plugin_name}' "
+                    + f"not found in library '{lib_name}' plugins.json")
+
+        # unregister from registry
+        plugin_path = rp.get_app_registry_plugin_json_path(plugin_name)
+        if os.path.isfile(plugin_path):
+            os.remove(plugin_path)
+
+        # save to disk after all changes
+        if remove_from_json:
+            write_json(Path(plugins_file), plugins_data, indent=4, sort_keys=False)
+        if remove_from_manifest:
+            self.save_lib_manifest(lib_path, manifest_data)
 
     @staticmethod
     def _normalize_registration_entries(entries):
@@ -739,7 +767,7 @@ class LibraryManager:
             lib_name, _ = self.parse_plugin_name(plugin_name)
         else:
             if self.is_valid_plugin_library(lib_name_or_path):
-                lib_name = self._lib_name_from_path(lib_name_or_path)
+                lib_name = self.lib_name_from_path(lib_name_or_path)
             else:
                 lib_name = lib_name_or_path
             plugin_name_stub = plugin_name.split("::")[-1]

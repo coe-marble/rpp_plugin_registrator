@@ -211,7 +211,7 @@ def register_cpp_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
         )
     )
 
-def unregister_cpp_plugin(plugin_info: Dict[str, Any]) -> None:
+def unregister_cpp_plugin(plugin_info: Dict[str, Any]) -> bool:
     """
     Unregisters a C++ plugin based on the provided plugin information.
 
@@ -222,6 +222,7 @@ def unregister_cpp_plugin(plugin_info: Dict[str, Any]) -> None:
     dest_path = shared_libs_path / f"{plugin_info.get('ClassName')}.so"
     if dest_path.exists():
         dest_path.unlink()
+    return True
 
 
 def generate_cpp_plugin_interface(plugin_type_info: PluginTypeInfo) -> None:

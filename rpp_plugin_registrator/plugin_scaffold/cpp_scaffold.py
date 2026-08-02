@@ -432,6 +432,21 @@ public:
             : reader_(main_wrapper.builder_.asReader()),
               orphaned_msg_builder_(std::move(main_wrapper.msg_builder_)) {{}}
 
+            Const(Const&& other) noexcept
+            : reader_(other.reader_),
+              orphaned_msg_builder_(std::move(other.orphaned_msg_builder_)) {{}}
+
+            Const& operator=(Const&& other) noexcept {{
+                if (this != &other) {{
+                    reader_ = other.reader_;
+                    orphaned_msg_builder_ = std::move(other.orphaned_msg_builder_);
+                }}
+                return *this;
+            }}
+
+            Const(const Const& other) = delete;
+            Const& operator=(const Const& other) = delete;
+
             operator schema::{lib_name}::{struct_name}::Reader() const {{ return reader_; }}
 '''
         for list_type in list_types:
@@ -554,22 +569,14 @@ public:
         {struct_name}(schema::{lib_name}::{struct_name}::Builder builder)
             : msg_builder_(nullptr), builder_(builder) {{}}
 
-        //{struct_name}(schema::{lib_name}::{struct_name}::Reader reader)
-        //    : msg_builder_(std::make_unique<capnp::MallocMessageBuilder>()),
-        //      builder_(msg_builder_->initRoot<schema::{lib_name}::{struct_name}>()) {{
-        //        builder_.setRoot(reader);
-        //}}
-
         virtual ~{struct_name}() = default;
 
+        // Move constructor and move assignment operator
         {struct_name}({struct_name}&&) = default;
         {struct_name}& operator=({struct_name}&&) = default;
-
-        //operator Const() const {{
-        //    return Const(const_cast<{struct_name}*>(this)->builder_.asReader());
-        //}}
-
-
+        // Delete copy constructor and copy assignment operator
+        {struct_name}(const {struct_name}&) = delete;
+        {struct_name}& operator=(const {struct_name}&) = delete;
 '''
 
         for field in struct.fields:
