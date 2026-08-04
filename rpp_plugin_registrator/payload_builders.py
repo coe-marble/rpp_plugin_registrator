@@ -130,6 +130,7 @@ def build_registry_plugin_type_entry(info: Dict[str, Any]) -> Dict[str, Any]:
         "ClassName": info.get("ClassName"),
         "PluginTypeName": info.get("PluginTypeName"),
         "Library": info.get("Library"),
+        "SourceLanguage": info.get("SourceLanguage"),
         "FullyQualifiedClassName": info.get("FullyQualifiedClassName"),
     }
 

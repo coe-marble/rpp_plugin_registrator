@@ -183,11 +183,16 @@ def generate_methods_for_foreign_language_adapter_server(lib_name: str, class_na
                 result_name = adapt_capnp_field_name(result["Name"])
                 body_lines.append(f"        context.getResults().set{result_name}(std::get<{index}>(results));\n")
         body_lines.append("        return ::kj::READY_NOW;\n")
+        if params_expr or len(method["Results"]) > 0:
+            context_if_arguments = "context"
+        else:
+            context_if_arguments = "/* context */"
         method_strings.append(
             _render_template(
                 server_template.METHOD_TEMPLATE,
                 method_name=method_name,
                 context_type=context_type,
+                context_if_arguments=context_if_arguments,
                 body="".join(body_lines),
             )
         )
@@ -448,6 +453,9 @@ public:
             Const& operator=(const Const& other) = delete;
 
             operator schema::{lib_name}::{struct_name}::Reader() const {{ return reader_; }}
+            Const shallow_copy() const {{
+                return Const(this->reader_);
+            }}
 '''
         for list_type in list_types:
             field_name = list_type.name

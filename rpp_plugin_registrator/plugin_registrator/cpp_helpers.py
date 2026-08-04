@@ -252,8 +252,6 @@ def get_default_ros_dependencies(
         "LibsToLink": libs_to_link
     }
 
-
-
 def try_get_ros_dependency_info(dep_name: str, lm) -> Optional[Dict[str, Any]]:
     from ament_index_python.packages import (
         get_package_share_directory,
@@ -269,9 +267,17 @@ def try_get_ros_dependency_info(dep_name: str, lm) -> Optional[Dict[str, Any]]:
         version = info.get("Version", None)
 
         prefix_dir = Path(share_directory).parent.parent
-        include_dirs.append(str(prefix_dir / "include" / dep_name))
+        dep_include_dir = prefix_dir / "include" / dep_name
+        include_dirs.append(str(dep_include_dir))
         lib_dirs.append(str(prefix_dir / "lib"))
-        libs_to_link.append(dep_name)
+        if (dep_include_dir / f"{dep_name}" / "msg").is_dir() \
+                or (dep_include_dir / f"{dep_name}" / "srv").is_dir() \
+                or (dep_include_dir / f"{dep_name}" / "action").is_dir():
+            # STUPID HACK: If the package has msg, srv, or action directories,
+            # we assume it has generated code and needs to link against the library with the same name as the package.
+            libs_to_link.append(f"{dep_name}__rosidl_typesupport_cpp")
+        else:
+            libs_to_link.append(dep_name)
         return {
             "Name": dep_name,
             "Version": version,

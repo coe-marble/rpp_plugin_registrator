@@ -324,20 +324,18 @@ def register_plugin_type_from_source(source_file: Path,
     return ret_plugins
 
 
-def unregister_plugin_type(plugin_id: str, registry_path: Path, library: str) -> bool:
-    if not registry_path.exists():
-        return False
+def unregister_plugin_type(plugin_name: str) -> bool:
 
-    registry = load_json(registry_path)
+    registry = load_json(rp.get_app_registry_json_path())
     plugin_types = registry.get(LIBRARY_PLUGIN_TYPES_KEY, {})
-    if plugin_id not in plugin_types:
+    if plugin_name not in plugin_types:
         return False
 
-    entry = plugin_types[plugin_id]
+    entry = plugin_types[plugin_name]
 
     unregister_plugin_type_dispatch(entry)
-    del plugin_types[plugin_id]
-    write_json(registry_path, registry)
+    del plugin_types[plugin_name]
+    write_json(rp.get_app_registry_json_path(), registry)
     return True
 
 
@@ -358,7 +356,8 @@ def validate_plugin_type(plugin_type_info: PluginTypeInfo, plugin_types: Dict[st
 
     return validate_plugin_type_dispatch(plugin_type_info)
 
-def list_registered_plugin_types(registry_path: Path) -> Dict[str, Any]:
+def list_registered_plugin_types() -> Dict[str, Any]:
+    registry_path = rp.get_app_registry_json_path()
     if not registry_path.exists():
         return default_registry_payload()
     return load_json(registry_path)

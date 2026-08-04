@@ -463,7 +463,6 @@ interface12 InvalidPlugin {
         with tempfile.TemporaryDirectory() as td:
             with self._temp_rpp_home(Path(td) / ".rpp"):
                 temp_root = Path(td)
-                registry_path = rp.get_app_registry_json_path()
                 source_path = temp_root / "plugins" / "ItemPlugin.capnp"
                 self._write_capnp_plugin_source(
                     source_path,
@@ -475,17 +474,13 @@ interface12 InvalidPlugin {
                 self.create_test_library(temp_root / ".rpp")
                 registry_api.register_plugin_type_from_source(source_path, library=self.TEST_LIBRARY)
 
-                self.assertFalse(registry_api.unregister_plugin_type("missing", registry_path, library=self.TEST_LIBRARY))
-                self.assertTrue(registry_api.unregister_plugin_type("testlib::ItemPlugin", registry_path, library=self.TEST_LIBRARY))
-                self.assertFalse(registry_api.unregister_plugin_type("testlib::ItemPlugin", registry_path, library=self.TEST_LIBRARY))
+                self.assertFalse(registry_api.unregister_plugin_type("missing"))
+                self.assertTrue(registry_api.unregister_plugin_type("testlib::ItemPlugin"))
+                self.assertFalse(registry_api.unregister_plugin_type("testlib::ItemPlugin"))
 
-                listed = registry_api.list_registered_plugin_types(registry_path)
+                listed = registry_api.list_registered_plugin_types()
                 item_exists = any(entry == "testlib::ItemPlugin" for entry in listed["PluginTypes"].keys())
                 self.assertFalse(item_exists)
-
-                missing_registry = temp_root / "registry" / "never_created.json"
-                missing_list = registry_api.list_registered_plugin_types(missing_registry)
-                self.assertEqual(missing_list, registry_api.default_registry_payload())
 
                 interfaces_path = rp.get_app_capnp_interfaces_path()
                 lib_interfaces_path = Path(interfaces_path) / self.TEST_LIBRARY

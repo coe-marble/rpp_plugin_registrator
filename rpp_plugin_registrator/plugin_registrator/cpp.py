@@ -10,6 +10,7 @@ import subprocess
 from rpp_plugin_registrator.registry_config import (
     get_app_interfaces_path,
     get_app_registry_path,
+    get_setting
 )
 
 from rpp_plugin_registrator.plugin_descriptors.core import (
@@ -91,6 +92,7 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
                 + f" in file '{source_file}': {result.stderr.decode()}", compile_cmd
     except Exception as e:
         full_command = " ".join(compile_cmd)
+        print(full_command)
         return f"Error during compilation of plugin class '{class_name}'" \
             + f" in file '{source_file}'.\nCommand: {full_command}\nError: {str(e)}", compile_cmd, out_file_path
     return None, compile_cmd, out_file_path
@@ -104,6 +106,10 @@ def compile_cpp_plugin_type(source_file:str, plugin_type_info: PluginTypeInfo,
     plugin_type_library = info.get("Library")
     imports = get_cpp_imports_for_rpp()
     linked_libs = ["-Wl,-z,defs", "-lcapnp", "-lcapnp-rpc", "-lkj", "-lkj-async"]
+
+    use_ros2 = get_setting("USE_ROS2_COMPILATION")
+    if use_ros2:
+        linked_libs += ["-DUSE_ROS2_COMPILATION=1"]
 
     wrapped = wrap_cpp_source_to_plugin_type_structure(source_file,
             out_dir, class_name, plugin_type_library)

@@ -85,7 +85,7 @@ ${methods_string}
 """
 
 
-METHOD_TEMPLATE = """    ::kj::Promise<void> ${method_name}(${context_type} context) override {
+METHOD_TEMPLATE = """    ::kj::Promise<void> ${method_name}(${context_type} ${context_if_arguments}) override {
     ${body}
 }
     """

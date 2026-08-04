@@ -589,7 +589,8 @@ class LibraryManager:
                 plugins_data[LIBRARY_PLUGINS_KEY] = []
 
             for comp in plugins_data[LIBRARY_PLUGINS_KEY]:
-                if comp['Name'] == plugin_info['Name']:
+                plugin_name = f"{lib_name}::{comp['Name']}"
+                if plugin_name == plugin_info['PluginName']:
                     warnings.warn(f"Plugin '{plugin_info['Name']}' already exists in library '{lib_name}'. Overwriting.")
                     plugins_data[LIBRARY_PLUGINS_KEY].remove(comp)
                     break
@@ -684,9 +685,8 @@ class LibraryManager:
             plugins_file = self._plugins_path(lib_path)
             plugins_data = load_json5(Path(plugins_file))
             found = False
-            _, name = self.parse_plugin_name(plugin_name)
             for comp in plugins_data.get(LIBRARY_PLUGINS_KEY, []):
-                if comp['Name'] == name:
+                if comp['Name'] == plugin_name:
                     plugins_data[LIBRARY_PLUGINS_KEY].remove(comp)
                     found = True
                     break
