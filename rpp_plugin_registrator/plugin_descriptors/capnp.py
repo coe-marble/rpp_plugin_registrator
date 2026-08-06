@@ -3,7 +3,7 @@ from __future__ import annotations
 import re, secrets
 from pathlib import Path
 import subprocess
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 from xml.dom.minidom import TypeInfo
 
 import capnp
@@ -51,10 +51,14 @@ def parse_capnp_type_from_param(plugin_param: Dict[str, Any], parser, dependenci
     from capnp import KjException
     # try to parse complex types. hasattr will raise an exception...
     try:
-        if hasattr(plugin_param, "schema") \
-                and hasattr(plugin_param.schema, "node") \
-                and hasattr(plugin_param.schema, "fields_list"):
-            display_name = plugin_param.schema.node.displayName
+        if hasattr(plugin_param, "schema"):
+            schema = plugin_param.schema
+        else:
+            schema = plugin_param
+
+        if hasattr(schema, "node") \
+                and hasattr(schema, "fields_list"):
+            display_name = schema.node.displayName
             name = display_name.split(':')[-1]
 
             lib_and_file_name = display_name.split(':')[0]
@@ -66,6 +70,14 @@ def parse_capnp_type_from_param(plugin_param: Dict[str, Any], parser, dependenci
                 kind="struct",
                 name=name,
                 capnp_type_display_name=display_name,
+            )
+        if hasattr(schema, "elementType"):
+            element_type = schema.elementType
+            name = plugin_param.proto.name
+            return TypeInfo(
+                kind="list",
+                name=name,
+                element_type=parse_capnp_type_from_param(element_type, parser, dependencies),
             )
     except KjException:
         pass
@@ -198,7 +210,7 @@ def load_capnp_schema_from_file(source_file: Path,
         new_tmp_file.write_text(source_text_new_id, encoding="utf-8")
         system_paths_for_capnp_imports = ["/usr/local/include", "/usr/include"]
         check = subprocess.check_output(
-                ["capnp", "compile", "-o-", str(new_tmp_file)], stderr=subprocess.STDOUT)
+                ["capnp", "compile", "-o-", str(new_tmp_file)], stderr=subprocess.PIPE)
         if use_global_parser:
             return capnp.load(str(new_tmp_file), imports=system_paths_for_capnp_imports)
         else:
@@ -219,7 +231,7 @@ def parse_capnp_plugin(source_file: Path,
     except subprocess.CalledProcessError as e:
         return ParsePluginTypeResult(
             is_valid=False,
-            message=f"Failed to load Cap'n Proto schema from '{source_file}': {e}",
+            message=f"Failed to load Cap'n Proto schema from '{source_file}': {e}\n{e.stderr.decode('utf-8')}",
             data=None,
         )
 

@@ -78,6 +78,7 @@ class PluginTypeRegistratorTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload), encoding="utf-8")
 
+
     def _write_capnp_anot_source(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -108,7 +109,7 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
         )
 
     def create_test_library(self, test_home: Path):
-        lm = LibraryManager(test_home)
+        lm = LibraryManager(test_home, init_anot_only=True)
         lm.get_or_create_plugin_library("testlib")
 
     def test_resolve_registry_path_uses_rpp_home_when_no_explicit_path(self):
@@ -332,7 +333,6 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
                 self.assertTrue(registered_capnp_file_exists)
                 self.assertEqual(entry["Library"], self.TEST_LIBRARY)
 
-
     def test_register_plugin_type_from_invalid_source(self):
 
         with tempfile.TemporaryDirectory() as td:
@@ -551,6 +551,33 @@ struct DisturbanceData {
 }
 """
 
+    def plugin_type_src3(self):
+        return """
+@0xaaaaaaaa00000007;
+struct Pose2D {
+    x @0 :Float64;
+    y @1 :Float64;
+    theta @2 :Float64;
+}
+
+struct Twist2D {
+    linear @0 :Float64;
+    angular @1 :Float64;
+}
+
+using Anot = import "rpp_common/anot.capnp";
+interface TestType1 $Anot.plugin("test") {
+  funcEmpty @0 () -> ();
+  funcWithSimpleParams @1 (paramFloat :Float64, paramBool :Bool) -> (resultFloat :Float64);
+  funcWithStructParam @2 (paramPose :Pose2D, paramTwist :Twist2D) -> (resultPose :Pose2D);
+  funcWithListParam @3 (paramListFloat :List(Float64), paramListPose :List(Pose2D)) -> (resultList :List(Float64));
+  funcWithListOfStructParam @4 (paramListPose :List(Pose2D)) -> (resultListTwist :List(Twist2D));
+  funcWithMultipleSimpleReturns @5 () -> (resultFloat :Float64, resultBool :Bool);
+  funcWithMultipleStructReturns @6 () -> (resultPose :Pose2D, resultTwist :Twist2D);
+  funcWithMultipleListReturns @7 () -> (resultListFloat :List(Float64), resultListPose :List(Pose2D));
+}
+"""
+
 
     def test_scaffold_all_languages(self):
         lib_path = self.lib_h.path
@@ -726,6 +753,25 @@ struct DisturbanceData {
         loaded = gen_source_file.read_text(encoding="utf-8")
 
         self.assertIn("class MockDisturbanceGeneratorPlugin", loaded)
+
+
+    def test_scaffold_cpp3(self):
+        self.registrator_module.SCAFFOLD_LANGUAGES = ["cpp"]
+        lib_path = self.lib_h.path
+        source_path = lib_path / "plugins" / "TestType1.capnp"
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(self.plugin_type_src3(), encoding="utf-8")
+
+        entries = registry_api.register_plugin_type_from_source(
+            source_path,
+            library="testlib",
+        )
+        entry = entries[0] if isinstance(entries, list) else entries
+
+        gen_source_file = self.cpp_scaffold_path / "rpp_plugin_types" / "testlib" / "TestType1.hpp"
+        self.assertTrue(gen_source_file.exists())
+        self.assertFalse((self.python_scaffold_path / "rpp_plugin_types" / "testlib" / "TestType1.py").exists())
+
 
 
 if __name__ == "__main__":

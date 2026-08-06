@@ -4,7 +4,9 @@ from dbm.ndbm import library
 from pathlib import Path
 from typing import Any, Dict
 
-from rpp_plugin_registrator.plugin_descriptors.core import FieldInfo, MethodInfo, PluginTypeInfo, TypeInfo
+from rpp_plugin_registrator.plugin_descriptors.core import (
+    FieldInfo, MethodInfo, PluginTypeInfo, TypeInfo
+)
 
 
 _PRIMITIVE_TYPE_MAP = {
@@ -35,7 +37,8 @@ def update_init_file(directory: Path, class_name: str) -> None:
             f.write(line)
 
 
-def parse_field_type(field_type: Dict[str, Any] | TypeInfo, library_name: str, imports=None, import_as_private=False) -> str:
+def parse_field_type(field_type: Dict[str, Any] | TypeInfo,
+        library_name: str, imports=None, import_as_private=False) -> str:
 
     if isinstance(field_type, TypeInfo):
         field_type = field_type.as_dict()
@@ -51,14 +54,17 @@ def parse_field_type(field_type: Dict[str, Any] | TypeInfo, library_name: str, i
         splits2 = field_type.get("CapnpTypeDisplayName", "").split(":")
         struct_name = splits2[-1]
         if import_as_private:
-            import_statement = f"from rpp_schema.{library_name_in_msg}.{struct_name} import {struct_name} as _{struct_name}"
+            import_statement = f"from rpp_schema.{library_name_in_msg}." \
+                + f"{struct_name} import {struct_name} as _{struct_name}"
         else:
-            import_statement = f"from rpp_schema.{library_name_in_msg}.{struct_name} import {struct_name}"
+            import_statement = f"from rpp_schema.{library_name_in_msg}" \
+                + f".{struct_name} import {struct_name}"
         if imports is not None and import_statement not in imports:
             imports.append(import_statement)
         return struct_name
     elif kind == "list":
-        element_type = parse_field_type(field_type.get("ElementType", {}), library_name, imports)
+        element_type = parse_field_type(
+            field_type.get("ElementType", {}), library_name, imports)
         return f"List[{element_type}]"
 
 
@@ -68,21 +74,26 @@ def generate_structs(description: PluginTypeInfo, output_path: Path) -> None:
     if description.parse_data is None or description.parse_data.structs is None:
         return
     for struct_name, struct in description.parse_data.structs.items():
-        imports = ["from typing import List, Dict, Any",
+        imports = ["from typing import List, Dict, Any, Tuple",
                    "from dataclasses import dataclass, field"]
         field_lines = []
         for field in struct.fields:
             field_type_parsed = parse_field_type(field.type, library_name, imports)
             if field.type.kind == "struct":
-                field_lines.append(f"{field.name}: {field_type_parsed} = field(default_factory={field_type_parsed})")
+                field_lines.append(f"{field.name}: {field_type_parsed}"
+                    + f" = field(default_factory={field_type_parsed})")
             elif field.type.kind == "list":
-                field_lines.append(f"{field.name}: {field_type_parsed} = field(default_factory=list)")
+                field_lines.append(
+                    f"{field.name}: {field_type_parsed} = field(default_factory=list)")
             else:
                 type_name = field.type.name
                 if type_name not in _PRIMITIVE_TYPE_MAP:
-                    raise ValueError(f"Unsupported primitive type '{type_name}' for field '{field.name}' in struct '{struct_name}'.")
+                    raise ValueError(
+                        f"Unsupported primitive type '{type_name}' for field "
+                        + f"'{field.name}' in struct '{struct_name}'.")
                 default_value = _PRIMITIVE_TYPE_MAP.get(field.type.name)[1]
-                field_lines.append(f"{field.name}: {field_type_parsed} = {default_value}")
+                field_lines.append(
+                    f"{field.name}: {field_type_parsed} = {default_value}")
         field_str = "\n    ".join(field_lines)
 
         imports_str = "\n".join(imports)
@@ -100,13 +111,15 @@ class {struct_name}(BaseModel):
 
     {field_str}
     '''
-        struct_file_path = output_path / "python" / "rpp_schema" / library_name / f"{struct_name}.py"
+        struct_file_path = output_path / "python" / "rpp_schema" \
+            / library_name / f"{struct_name}.py"
         if not struct_file_path.parent.exists():
             struct_file_path.parent.mkdir(parents=True, exist_ok=True)
         struct_file_path.write_text(content, encoding="utf-8")
 
 def create_method_prototype_string(method: MethodInfo,
-        library_name: str, type_aliases=None, imports=None, append_to_params_call=None) -> str:
+        library_name: str, type_aliases=None,
+        imports=None, append_to_params_call=None) -> str:
     param_types_with_names = []
     params_call_backend = []
     for param in method.params:
@@ -137,7 +150,8 @@ def create_method_prototype_string(method: MethodInfo,
             if field_type.kind == "struct":
                 if type_alias not in type_aliases:
                     type_aliases.append(type_alias)
-    param_types_with_names_str = ', '.join(param_types_with_names) + ', ' if param_types_with_names else ''
+    param_types_with_names_str = \
+        ', '.join(param_types_with_names) + ', ' if param_types_with_names else ''
     if len(result_types_with_names) == 0:
         result_types_with_names_str = "None"
     elif len(result_types_with_names) == 1:
@@ -149,7 +163,8 @@ def create_method_prototype_string(method: MethodInfo,
 
 
 
-def create_plugin_methods_string_with_type_alisases_and_imports(description: PluginTypeInfo, imports=None) -> str:
+def create_plugin_methods_string_with_type_alisases_and_imports(
+        description: PluginTypeInfo, imports=None) -> str:
     """Generate type aliases for the plugin class based on the description."""
     type_aliases = []
 
@@ -165,7 +180,8 @@ def create_plugin_methods_string_with_type_alisases_and_imports(description: Plu
     return methods_str, type_aliases, imports
 
 
-def create_adapter_server_methods_string_with_type_alisases_and_imports(description: PluginTypeInfo, imports=None) -> str:
+def create_adapter_server_methods_string_with_type_alisases_and_imports(
+        description: PluginTypeInfo, imports=None) -> str:
     """Generate type aliases for the plugin adapter server class based on the description."""
     type_aliases = []
     methods_str = ""
@@ -182,7 +198,8 @@ def create_adapter_server_methods_string_with_type_alisases_and_imports(descript
 
     return methods_str, type_aliases, imports
 
-def create_adapter_client_methods_string_with_type_alisases_and_imports(description: PluginTypeInfo, imports=None) -> str:
+def create_adapter_client_methods_string_with_type_alisases_and_imports(
+        description: PluginTypeInfo, imports=None) -> str:
     """Generate type aliases for the plugin adapter client class based on the description."""
     type_aliases = []
     methods_str = ""
@@ -205,18 +222,22 @@ def create_adapter_client_methods_string_with_type_alisases_and_imports(descript
 
     return methods_str, type_aliases, imports
 
-def generate_plugin_adapter_client(description: PluginTypeInfo, scaffolded_file_path: Path) -> None:
+def generate_plugin_adapter_client(
+        description: PluginTypeInfo, scaffolded_file_path: Path) -> None:
     """Generate a Python class for the plugin adapter client based on the description."""
     class_name = description.info["ClassName"]
     plugin_type_name = description.info["PluginTypeName"]
     lib_name = description.info["Library"]
     imports = []
-    methods_str, type_aliases, imports = create_adapter_client_methods_string_with_type_alisases_and_imports(description, imports)
+    methods_str, type_aliases, imports = \
+        create_adapter_client_methods_string_with_type_alisases_and_imports(
+            description, imports)
     type_aliases_str = "\n    ".join(type_aliases) if type_aliases else ""
     file_name = Path(f"{description.info['SourceFile']}").name
     imports_str = "\n".join(imports)
 
     content = f'''
+from typing import List, Dict, Any, Tuple
 import capnp
 import rpp_py.capnp_schema as capnp_schema
 from rpp_py.client_context import ClientContext
@@ -282,13 +303,15 @@ def generate_plugin_adapter_server(description: PluginTypeInfo, scaffolded_file_
     plugin_type_name = description.info["PluginTypeName"]
     lib_name = description.info["Library"]
     imports = []
-    methods_str, type_aliases, imports = create_adapter_server_methods_string_with_type_alisases_and_imports(description, imports)
+    methods_str, type_aliases, imports = \
+        create_adapter_server_methods_string_with_type_alisases_and_imports(description, imports)
     type_aliases_str = "\n    ".join(type_aliases) if type_aliases else ""
     file_name = Path(f"{description.info['SourceFile']}").name
     imports_str = "\n".join(imports)
 
     content = f'''
 
+from typing import List, Dict, Any, Tuple
 {imports_str}
 import capnp
 import rpp_py.capnp_schema as capnp_schema
@@ -370,10 +393,12 @@ class {class_name}_AdapterServer(capnp_schema.get_server_class("{plugin_type_nam
 def generate_plugin_class(description: PluginTypeInfo, output_path: Path) -> None:
     class_name = description.info["ClassName"]
     imports = []
-    methods_str, type_aliases, imports = create_plugin_methods_string_with_type_alisases_and_imports(description, imports)
+    methods_str, type_aliases, imports = \
+        create_plugin_methods_string_with_type_alisases_and_imports(description, imports)
     type_aliases_str = "\n    ".join(type_aliases) if type_aliases else ""
     imports_str = "\n".join(imports)
     content = f'''
+from typing import List, Dict, Any, Tuple
 from rpp_common.py.RPP_Plugin import RPP_Plugin
 from rpp_py.context import ComponentContext
 {imports_str}
@@ -400,7 +425,8 @@ class {class_name}(RPP_Plugin):
     return file_path, class_name
 
 
-def scaffold_python_from_capnp(description: PluginTypeInfo, output_path: Path, only_stubs: bool = False) -> None:
+def scaffold_python_from_capnp(description: PluginTypeInfo,
+        output_path: Path, only_stubs: bool = False) -> None:
 
     generate_structs(description, output_path)
 

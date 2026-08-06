@@ -90,11 +90,11 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
         if result.returncode != 0:
             return f"Compilation failed for plugin class '{class_name}'" \
                 + f" in file '{source_file}': {result.stderr.decode()}", compile_cmd
-    except Exception as e:
+    except subprocess.CalledProcessError as e:
         full_command = " ".join(compile_cmd)
-        print(full_command)
-        return f"Error during compilation of plugin class '{class_name}'" \
-            + f" in file '{source_file}'.\nCommand: {full_command}\nError: {str(e)}", compile_cmd, out_file_path
+        return f"Error during compilation of class '{class_name}'" \
+            + f" in file '{source_file}'.\nCommand: {full_command}" \
+            + f"\nError: {str(e)}\n{e.stderr.decode('utf-8')}", compile_cmd, out_file_path
     return None, compile_cmd, out_file_path
 
 def compile_cpp_plugin_type(source_file:str, plugin_type_info: PluginTypeInfo,
@@ -252,9 +252,10 @@ def generate_cpp_plugin_interface(plugin_type_info: PluginTypeInfo) -> None:
             suppress_warnings=True
         )
         if compile_error:
-            raise RuntimeError(f"Failed to compile C++ plugin '{class_name}' from source file '{hpp_source_file}'.\n"
-                            f"Compilation command: {' '.join(compile_cmd)}\n"
-                            f"Error: {compile_error}")
+            shutil.rmtree(str(tmp_out_dir))
+            raise RuntimeError(
+                f"Failed to compile C++ plugin '{class_name}'.\n"
+                    + f"Error: {compile_error}")
 
     dest_path = get_cpp_shared_libraries_path(description["Library"], is_plugin=False)
     shutil.move(tmp_out_dir / f"{class_name}.so", dest_path / f"{class_name}.so")

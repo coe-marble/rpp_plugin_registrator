@@ -37,6 +37,8 @@ public:
                 std::chrono::system_clock::now().time_since_epoch());
     }
 
+    virtual ~${class_name}_Adapter_Client() noexcept = default;
+
     bool configure_adapter_client__(std::shared_ptr<rpp::ClientAdapterParams> params) override {
         if (!params) {
             throw std::invalid_argument("Params cannot be null");
@@ -71,7 +73,14 @@ public:
         return info_;
     }
 
-    virtual ~${class_name}_Adapter_Client() noexcept = default;
+    void initialize(const rpp::ComponentContext& /*context */) override {
+        // Initialization logic if needed
+    }
+
+    void reset() override {
+        // Reset logic if needed
+    }
+
 
 $methods_string
 };

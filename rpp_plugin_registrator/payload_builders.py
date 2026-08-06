@@ -28,16 +28,14 @@ def build_library_manifest(
 def build_library_package(
     library: str,
     version: str = "0.0.1",
-    package_id: str | None = None,
-    dependencies: List[str] | None = None,
-    install: List[str] | None = None,
 ) -> Dict[str, Any]:
     return {
         "Library": library,
-        "Id": package_id or str(uuid4()),
+        "Id": str(uuid4()),
         "Version": version,
-        "Dependencies": dependencies or [],
-        "Install": install or [],
+        "Dependencies": [],
+        "RosDependencies": [],
+        "Install": [],
     }
 
 

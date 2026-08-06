@@ -383,7 +383,7 @@ class RPPPluginManager(QMainWindow):
 
         def on_finish(result, error):
             if error is not None:
-                self.log(f"Failed to refresh library '{lib}': {error}")
+                self.log(f"Failed to refresh library '{lib}':\n{error}")
                 return
             self.log(f"Library '{lib}' refreshed.")
             self.load_plugins()
@@ -425,7 +425,7 @@ class RPPPluginManager(QMainWindow):
             if self.selected_item_type == "plugin":
                 if error is not None:
                     self.log(f"Failed to refresh plugin '{plugin.get('PluginName', '')}'"
-                        + f" in library '{lib}': {error}")
+                        + f" in library '{lib}':\n{error}")
                     return
                 self.log(f"Plugin '{plugin.get('PluginName', '')}'"
                          + f" refreshed in library '{lib}'.")

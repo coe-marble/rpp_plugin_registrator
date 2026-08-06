@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
 
-from rpp_plugin_registrator.qt.csb_pyqt_plugin_manager import RPPPluginManager
+from rpp_plugin_registrator.qt.plugin_manager import RPPPluginManager
 from rpp_plugin_registrator.library_manager import LibraryManager
 
 def main() -> int:
