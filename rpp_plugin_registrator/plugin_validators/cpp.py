@@ -20,7 +20,7 @@ def early_return_invalid(message: str) -> PluginValidationResult:
     )
 
 def extract_plugin_type(desc, plugin_types) -> str | None:
-    for base_class_name in desc.info.get("BaseClassNames"):
+    for base_class_name in desc.info.get("BaseClasses"):
         if base_class_name is None:
             continue
         base_class_name_candidate = base_class_name

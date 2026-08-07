@@ -11,6 +11,7 @@ import tree_sitter_cpp as ts_cpp
 from .core import (
     ParsePluginData,
     ParsePluginResult,
+    build_base_plugin_description,
 )
 
 
@@ -215,15 +216,20 @@ def parse_cpp_plugin(source_file: Path, plugin_id: Optional[str]) -> ParsePlugin
     class_infos.sort(key=lambda item: (0 if item["BaseClassNames"] else 1, -len(item["Methods"]), item["Name"]))
     selected_class = class_infos[0]
 
+
+    plugin_info = build_base_plugin_description(
+        name=selected_class["Name"],
+        language="cpp",
+        source_file=source_file,
+        class_name=selected_class["Name"],
+        base_class_name=selected_class["BaseClassNames"][0] if selected_class["BaseClassNames"] else None,
+        base_classes=selected_class["BaseClassNames"],
+        description="No description provided.",
+        is_casadi=False,
+    )
+
     plugin_info: Dict[str, Any] = {
-        "Name": selected_class["Name"],
-        "ClassName": selected_class["Name"],
-        "SourceLanguage": "cpp",
-        "SourceFile": str(source_file),
-        "SourceFileType": "cpp",
-        "PluginPath": str(source_file),
-        "BaseClassName": selected_class["BaseClassNames"][0] if selected_class["BaseClassNames"] else None,
-        "BaseClassNames": selected_class["BaseClassNames"],
+        **plugin_info,
         "Methods": selected_class["Methods"],
         "Fields": selected_class["Fields"],
         "ClassImplementations": class_infos,

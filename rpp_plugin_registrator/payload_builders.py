@@ -60,7 +60,7 @@ def build_plugin_info_payload(
     plugin_name: str,
     library: str,
     source_language: str = "unknown",
-    plugin_path: str = "",
+    source_file: str = "",
     description: str = "No description provided.",
     is_casadi: bool = False,
 
@@ -70,7 +70,7 @@ def build_plugin_info_payload(
         "PluginName": plugin_name,
         "Library": library,
         "Description": description,
-        "PluginPath": plugin_path,
+        "SourceFile": source_file,
         "IsCasadi": is_casadi,
         "SourceLanguage": source_language,
     }
@@ -113,7 +113,7 @@ def build_library_manifest_plugin_entry(
         "PluginTypeLibrary": plugin["PluginTypeLibrary"],
         "Library": plugin["Library"],
         "Description": plugin["Description"],
-        "PluginPath": plugin["PluginPath"],
+        "SourceFile": plugin["SourceFile"],
         "IsCasadi": plugin["IsCasadi"],
         "SourceLanguage": plugin["SourceLanguage"],
     }
@@ -139,7 +139,7 @@ def build_registry_plugin_entry(info: Dict[str, Any]) -> Dict[str, Any]:
         "PluginName": info.get("PluginName"),
         "Library": info.get("Library"),
         "Description": info.get("Description"),
-        "PluginPath": info.get("PluginPath"),
+        "SourceFile": info.get("SourceFile"),
         "IsCasadi": info.get("IsCasadi"),
         "SourceLanguage": info.get("SourceLanguage"),
     }

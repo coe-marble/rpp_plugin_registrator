@@ -169,7 +169,7 @@ def register_cpp_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
         description (Dict[str, Any]): A dictionary containing the plugin description.
     """
     description = plugin_info.info
-    source_file = description.get("PluginPath")
+    source_file = description.get("SourceFile")
     class_name = description.get("ClassName")
     library = description.get("Library")
     tmp_out_dir = get_tmp_dir_for_compilation(source_file, class_name)

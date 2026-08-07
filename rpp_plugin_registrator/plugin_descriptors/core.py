@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from rpp_common.py.descriptors import ParameterDescription
+from rpp_py.parameter_description import ParameterDescription
 
 from ..utils import to_snake_case
 
@@ -277,27 +277,28 @@ def extract_plugin_descriptions(plugin_class: ast.ClassDef) -> Dict[str, Any]:
                 descriptions[target.id] = value if isinstance(value, list) else []
     return descriptions
 
-def build_plugin_description(
-    plugin_name: str,
+
+def build_base_plugin_description(
+    name: str,
     language: str,
     source_file: Path,
     class_name: Optional[str],
     base_class_name: Optional[str],
-    methods: List[Dict[str, Any]],
+    base_classes: Optional[List[str]],
+    description: str,
     is_casadi: bool = False,
 ) -> Dict[str, Any]:
 
     return {
         "SchemaVersion": 1,
-        "Name": plugin_name,
+        "Name": name,
         "SourceLanguage": language,
         "SourceFile": str(source_file),
         "ClassName": class_name,
         "BaseClassName": base_class_name,
+        "BaseClasses": base_classes,
+        "Description": description,
         "IsCasadi": is_casadi,
-        "Interface": {
-            "Methods": [method.as_dict() for method in methods]
-        },
     }
 
 def apply_library_context_to_plugin(plugin_info: Dict[str, Any], library: str) -> Dict[str, Any]:

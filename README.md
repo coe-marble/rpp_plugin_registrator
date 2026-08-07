@@ -163,5 +163,5 @@ python3 rpp_registrator.py generate-interface \
 ## Notes
 
 - C++ extraction is heuristic and expects plugins similar to `rpp::Plugin` implementations in `rpp_core`.
-- Python extraction expects a class deriving from `RPP_Plugin` with both `name(self)` and `execute(self, ...)` methods.
+- Python extraction expects a class deriving from `Plugin`.
 - The registry file is upsert-based: registering the same `plugin.id` replaces the previous entry.

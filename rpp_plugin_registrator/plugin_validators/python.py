@@ -49,7 +49,7 @@ def validate_python_plugin(desc: PluginInfo,
         )
 
     mro = [cls.__name__ for cls in plugin_class.__mro__]
-    has_rpp_plugin = any(cls.__name__ == 'RPP_Plugin' for cls in plugin_class.__mro__)
+    has_rpp_plugin = any(cls.__name__ == 'Plugin' for cls in plugin_class.__mro__)
     cls, plugin_type = _extract_plugin_type_from_mro(plugin_class, plugin_types)
     result_data = {
         "Mro": mro,
@@ -65,7 +65,7 @@ def validate_python_plugin(desc: PluginInfo,
     if not has_rpp_plugin:
         return PluginValidationResult(
             is_valid=False,
-            message=f"Plugin class '{class_name}' does not inherit from RPP_Plugin. MRO: {' -> '.join(mro)}",
+            message=f"Plugin class '{class_name}' does not inherit from Plugin. MRO: {' -> '.join(mro)}",
             validation_data=result_data,
         )
 

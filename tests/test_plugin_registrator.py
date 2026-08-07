@@ -110,7 +110,7 @@ interface ControlType $Anot.plugin("ControlType"){
 
             plugin_path = plugin_dir / "MyPlugin.py"
             plugin_path.write_text(
-                """from rpp_plugin_types.rpp_common import MotionController2D
+                """from rpp_plugin_types.rpp_testing import MotionController2D
 class MyPlugin(MotionController2D):
     def name(self) -> str:
         return "my_plugin"
@@ -138,7 +138,7 @@ class MyPlugin(MotionController2D):
             self.assertIn("Plugins", manifest_payload)
             self.assertIn("TestLib::MyPlugin", manifest_payload["Plugins"])
             abs_path = manager.get_plugin_path_absolute(
-                manifest_payload["Plugins"]["TestLib::MyPlugin"]["PluginPath"],
+                manifest_payload["Plugins"]["TestLib::MyPlugin"]["SourceFile"],
                 "TestLib",
             )
 
@@ -280,7 +280,7 @@ class HelloPlugin(MotionController2D):
         self.assertIn("rpp_testing::MotionController2D", plugins["TestLib"])
         hello_item = self.manager.get_plugin_info_from_lib("TestLib::HelloPlugin")
         self.assertIsNotNone(hello_item)
-        self.assertEqual(hello_item["Name"], "hello")
+        self.assertEqual(hello_item["Name"], "HelloPlugin")
         self.assertEqual(hello_item["ClassName"], "HelloPlugin")
         self.assertEqual(hello_item["PluginType"], "rpp_testing::MotionController2D")
         self.assertEqual(hello_item["Library"], "TestLib")
@@ -434,7 +434,7 @@ class ComponentPlugin(MotionController2D):
         self.assertIn("Plugins", manifest_payload)
         self.assertIn("TestLib::ComponentPlugin", manifest_payload["Plugins"])
         abs_path = self.manager.get_plugin_path_absolute(
-            manifest_payload["Plugins"]["TestLib::ComponentPlugin"]["PluginPath"],
+            manifest_payload["Plugins"]["TestLib::ComponentPlugin"]["SourceFile"],
             "TestLib",
         )
         self.assertEqual(
@@ -501,7 +501,7 @@ class CppPluginRegistratorTests(unittest.TestCase):
             self.assertIn("Plugins", manifest_payload)
             self.assertIn("TestLib::ComponentPluginSimpleCpp", manifest_payload["Plugins"])
             abs_path = manager.get_plugin_path_absolute(
-                manifest_payload["Plugins"]["TestLib::ComponentPluginSimpleCpp"]["PluginPath"],
+                manifest_payload["Plugins"]["TestLib::ComponentPluginSimpleCpp"]["SourceFile"],
                 "TestLib",
             )
             self.assertEqual(
@@ -555,7 +555,7 @@ class CppPluginRegistratorTests(unittest.TestCase):
                 self.assertIn("Plugins", manifest_payload)
                 self.assertIn(f"TestLib::{class_name}", manifest_payload["Plugins"])
                 abs_path = manager.get_plugin_path_absolute(
-                    manifest_payload["Plugins"][f"TestLib::{class_name}"]["PluginPath"],
+                    manifest_payload["Plugins"][f"TestLib::{class_name}"]["SourceFile"],
                     "TestLib",
                 )
                 self.assertEqual(
@@ -612,7 +612,7 @@ class CppPluginRegistratorTests(unittest.TestCase):
             self.assertIn("Plugins", manifest_payload)
             self.assertIn("TestLib::ComponentPluginWithDependencies", manifest_payload["Plugins"])
             abs_path = manager.get_plugin_path_absolute(
-                manifest_payload["Plugins"]["TestLib::ComponentPluginWithDependencies"]["PluginPath"],
+                manifest_payload["Plugins"]["TestLib::ComponentPluginWithDependencies"]["SourceFile"],
                 "TestLib",
             )
             self.assertEqual(
@@ -649,7 +649,7 @@ class CppPluginRegistratorTests(unittest.TestCase):
             self.assertIn("Plugins", manifest_payload)
             self.assertIn("TestLib::AllInterfaceTypesCpp", manifest_payload["Plugins"])
             abs_path = manager.get_plugin_path_absolute(
-                manifest_payload["Plugins"]["TestLib::AllInterfaceTypesCpp"]["PluginPath"],
+                manifest_payload["Plugins"]["TestLib::AllInterfaceTypesCpp"]["SourceFile"],
                 "TestLib",
             )
             self.assertEqual(

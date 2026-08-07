@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from cairo import HAS_ATSUI_FONT
-from rpp_common.py.descriptors import ParameterDescription
+from rpp_py.parameter_description import ParameterDescription
 from rpp_plugin_registrator.plugin_descriptors.core import (
     PluginInfo, PluginRegisterData, PluginRegistrationResult, PluginTypeInfo
 )

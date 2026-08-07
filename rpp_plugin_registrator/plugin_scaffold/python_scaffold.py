@@ -64,7 +64,8 @@ def parse_field_type(field_type: Dict[str, Any] | TypeInfo,
         return struct_name
     elif kind == "list":
         element_type = parse_field_type(
-            field_type.get("ElementType", {}), library_name, imports)
+            field_type.get("ElementType", {}), library_name, imports,
+            import_as_private=import_as_private)
         return f"List[{element_type}]"
 
 
@@ -141,6 +142,12 @@ def create_method_prototype_string(method: MethodInfo,
             if field_type.kind == "struct":
                 if type_alias not in type_aliases:
                     type_aliases.append(type_alias)
+            elif field_type.kind == "list" and field_type.element_type.kind == "struct":
+                element_type_parsed = parse_field_type(field_type.element_type,
+                    library_name, imports, import_as_private=True)
+                type_alias = f"{element_type_parsed} = _{element_type_parsed}"
+                if type_alias not in type_aliases:
+                    type_aliases.append(type_alias)
 
     result_types_with_names = []
     for output in method.results:
@@ -152,6 +159,12 @@ def create_method_prototype_string(method: MethodInfo,
         if type_aliases is not None:
             type_alias = f"{parsed_type} = _{parsed_type}"
             if field_type.kind == "struct":
+                if type_alias not in type_aliases:
+                    type_aliases.append(type_alias)
+            elif field_type.kind == "list" and field_type.element_type.kind == "struct":
+                element_type_parsed = parse_field_type(field_type.element_type,
+                    library_name, imports, import_as_private=True)
+                type_alias = f"{element_type_parsed} = _{element_type_parsed}"
                 if type_alias not in type_aliases:
                     type_aliases.append(type_alias)
     param_types_with_names_str = \
@@ -403,18 +416,18 @@ def generate_plugin_class(description: PluginTypeInfo, output_path: Path) -> Non
     imports_str = "\n".join(imports)
     content = f'''
 from typing import List, Dict, Any, Tuple
-from rpp_common.py.RPP_Plugin import RPP_Plugin
+from rpp_py.plugin import Plugin
 from rpp_py.context import ComponentContext
 {imports_str}
 
-class {class_name}(RPP_Plugin):
+class {class_name}(Plugin):
 
     {type_aliases_str}
 
     {methods_str}
 
-    def initialize(self, context):
-        pass
+    def initialize(self, context: ComponentContext):
+        raise NotImplementedError("This method should be implemented in the plugin class.")
 '''
 
     lib_name = description.info["Library"]

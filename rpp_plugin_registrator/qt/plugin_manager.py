@@ -359,6 +359,7 @@ class RPPPluginManager(QMainWindow):
 
             if self.lib_manager.is_valid_plugin_library(d):
                 self.log(f"Library detected in '{d}'. Registering...")
+                QApplication.instance().processEvents()
                 self.register_plugin_library(path=d, link_install=True)
 
         self.load_plugins()
@@ -440,7 +441,7 @@ class RPPPluginManager(QMainWindow):
             if self.selected_item_type == "plugin":
                 self.lib_manager.unregister_plugin(plugin.get("PluginName", ""),
                     remove_from_json=False, throw_if_not_found=False)
-                full_path = Path(lib_path) / plugin.get("PluginPath", "")
+                full_path = Path(lib_path) / plugin.get("SourceFile", "")
                 self.lib_manager.register_plugin_from_source(full_path, lib)
                 self.select_library(lib)
                 self.select_plugin(plugin.get("PluginName", ""))
@@ -474,12 +475,12 @@ class RPPPluginManager(QMainWindow):
             self.log(f"Plugin type file '{file_path}' copied to library '{lib}'.")
 
         full_plugin_path = file_path
-        if not self.lib_manager.is_supported_plugin_file(file_path):
+        if not self.lib_manager.is_supported_plugin_type_file(file_path):
             self.log(f"Unsupported plugin type file type: '{file_path}'.")
             return
 
         def run():
-            self.lib_manager.register_plugin_from_source(full_plugin_path, lib)
+            self.lib_manager.register_plugin_type_from_source(full_plugin_path, lib)
 
         self.log(f"Registering plugin type from '{file_path}' to library '{lib}'. This may take a few moments...")
         def on_finish(result, error):
@@ -537,25 +538,27 @@ class RPPPluginManager(QMainWindow):
             return
 
         def run():
-            self.lib_manager.register_plugin_from_source(full_plugin_path, lib)
+            return self.lib_manager.register_plugin_from_source(full_plugin_path, lib)
 
         self.log(f"Registering plugin from '{file_path}' to library '{lib}'. This may take a few moments...")
         def on_finish(result, error):
             if error is not None:
                 self.log(f"Failed to register plugin '{full_plugin_path}' in library '{lib}': {error}")
                 return
-            if result is False:
+            if result is None or result.get("PluginName", "") == "":
                 self.log(f"Failed to register plugin '{full_plugin_path}' in library '{lib}'.")
             else:
                 self.log(f"Plugin '{full_plugin_path}' registered in library '{lib}'.")
                 self.load_plugins()
+                self.select_library(lib)
+                self.select_plugin(result.get("PluginName", ""))
 
         self._do_fn(run, on_finish)
 
     def _do_fn(self, fn, on_finish):
 
         while self.do_in_progress:
-            QtCore.QCoreApplication.processEvents()
+            QApplication.instance().processEvents()
 
         if self.lib_manager.is_long_library_management:
             self.do_in_progress = True
@@ -601,6 +604,7 @@ class RPPPluginManager(QMainWindow):
             self.lib_manager.unregister_plugin(plugin_name)
             self.log(f"Plugin '{plugin_name}' unregistered from library '{lib}'.")
         self.load_plugins()
+        self.select_library(lib)
 
     def unregister_library(self):
         # are you sure
@@ -651,7 +655,7 @@ class RPPPluginManager(QMainWindow):
 
 
     def open_plugin_file(self, plugin):
-        path = plugin.get('PluginPath', "")
+        path = plugin.get('SourceFile', "")
         lib_path = self.lib_manager.get_library_path(plugin.get('Library', ""))
         if plugin["SourceLanguage"] == 'slx':
             path = path.split(':')[0]
@@ -686,6 +690,23 @@ class RPPPluginManager(QMainWindow):
         self._reset_views()
         self.refresh_plugin_types_list()
         self.refresh_plugin_table()
+
+        lib = self.get_active_library()
+        if lib in ("rpp_common", "rpp_testing"):
+            self.registerPluginBtn.setEnabled(False)
+            self.registerPluginTypeBtn.setEnabled(False)
+            self.unregisterBtn.setEnabled(False)
+            self.refreshBtn.setEnabled(False)
+            self.refreshLibraryBtn.setEnabled(False)
+            self.unregisterLibraryBtn.setEnabled(False)
+        else:
+            self.registerPluginBtn.setEnabled(True)
+            self.registerPluginTypeBtn.setEnabled(True)
+            self.unregisterBtn.setEnabled(True)
+            self.refreshBtn.setEnabled(True)
+            self.refreshLibraryBtn.setEnabled(True)
+            self.unregisterLibraryBtn.setEnabled(True)
+
 
     def on_plugin_type_selected(self):
         self.refresh_plugin_types_list()

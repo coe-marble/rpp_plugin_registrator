@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from typing import Union
-import xml
 import json5
 import os, sys
 import shutil
@@ -59,10 +58,6 @@ class LibraryManager:
         self._ensure_layout(init_anot_only=init_anot_only)
         if source_libraries:
             self._source_registered_libraries()
-
-    @property
-    def is_long_generation(self):
-        return False
 
     @property
     def is_long_library_management(self):
@@ -335,7 +330,7 @@ class LibraryManager:
 
     def get_plugin_class_from_info(self, info):
         """Get plugin class from plugin info dictionary."""
-        plugin_path = self.get_plugin_path_absolute(info["PluginPath"], info["Library"])
+        plugin_path = self.get_plugin_path_absolute(info["SourceFile"], info["Library"])
         class_name = info["ClassName"]
         return self.get_plugin_class(plugin_path, class_name)
 
@@ -412,6 +407,12 @@ class LibraryManager:
             raise ValueError(f"Plugin type '{plugin_type_name}' not found in library '{lib_name}'")
         return load_json5(Path(json_path))
 
+    def register_plugin_type_from_source(self, plugin_type_file: Union[str, Path], lib_name: str, override: bool = False):
+        return ptyp_reg_api.register_plugin_type_from_source(plugin_type_file, lib_name, override=override)
+
+    def unregister_plugin_type(self, plugin_type_name: str):
+        return ptyp_reg_api.unregister_plugin_type(plugin_type_name)
+
     # Library Management Methods
     def refresh_plugin_library(self, lib_name, throw=True):
         """Refresh a plugin library's manifest."""
@@ -419,7 +420,10 @@ class LibraryManager:
         if not self.is_valid_plugin_library(path):
             raise ValueError(f"Library '{lib_name}' is not a valid library")
 
-        plugins = load_json5(Path(self._plugins_path(path)))
+        try:
+            plugins = load_json5(Path(self._plugins_path(path)))
+        except Exception as e:
+            raise ValueError(f"Failed to load plugins.json for library '{lib_name}': {e}")
 
         exts = get_supported_plugin_type_extensions()
         for plugin_type_path in self._iter_registration_files(path,
@@ -570,7 +574,7 @@ class LibraryManager:
         plugin_info = build_plugin_info_payload(
             name=desc["Name"],
             plugin_name=desc["PluginName"],
-            plugin_path=str(rel_path),
+            source_file=str(rel_path),
             source_language=desc["SourceLanguage"],
             description=description,
             library=lib_name,

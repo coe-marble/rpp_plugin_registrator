@@ -10,7 +10,7 @@ from .core import (
     ParsePluginData,
     ParsePluginResult,
     annotation_to_type_info,
-    build_plugin_description,
+    build_base_plugin_description,
     read_text,
 )
 
@@ -46,7 +46,7 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> ParsePlu
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             base_names = [name for name in (_base_name(base) for base in node.bases) if name]
-            if "RPP_Plugin" in base_names:
+            if "Plugin" in base_names:
                 plugin_class = node
                 plugin_base_names = base_names
                 break
@@ -98,23 +98,23 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> ParsePlu
             results=[FieldInfo(name="return", type=return_type)] if return_type else []
         ))
 
-        if item.name == "name":
-            for stmt in item.body:
-                if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
-                    plugin_name = stmt.value.value
-                    break
 
-    resolved_name = plugin_name
-
-    desc = build_plugin_description(
-        plugin_name=resolved_name,
+    desc = build_base_plugin_description(
+        name=plugin_class.name,
         language="python",
         source_file=source_file,
         class_name=plugin_class.name,
         base_class_name=plugin_base_names[0] if plugin_base_names else None,
-        methods=methods,
+        base_classes=plugin_base_names,
+        description="No description provided.",
         is_casadi=is_casadi,
     )
+
+    desc = {
+        **desc,
+        "Methods": [method.as_dict() for method in methods],
+        "Fields": [],
+    }
 
     return ParsePluginResult(
         is_valid=True,

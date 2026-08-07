@@ -113,7 +113,9 @@ def _ensure_default_library(paths: Dict[str, Path], library_name: str) -> Path:
     return library_path
 
 def _initialize_common_plugins(paths: Dict[str, Path],
-        common_plugins_dir: Optional[Path], init_anot_only: bool) -> List[str]:
+        common_plugins_dir: Optional[Path],
+        init_anot_only: bool,
+        override: bool) -> List[str]:
     resolved_common_plugins_dir = _resolve_common_plugins_dir(common_plugins_dir)
 
 
@@ -134,7 +136,8 @@ def _initialize_common_plugins(paths: Dict[str, Path],
         default_library_name = Path(source_file).parent.name
         _ensure_default_library(paths, default_library_name)
         types = register_plugin_type_from_source(source_file,
-                default_library_name, whitelist_plugins=whitelist_plugin_types)
+                default_library_name, whitelist_plugins=whitelist_plugin_types,
+                override=override)
         initialized_plugin_types.extend(types)
         if init_anot_only and source_file.name == "anot.capnp":
             break
@@ -172,14 +175,18 @@ def ensure_rpp_layout(
     if override_initialization:
         if init_marker_path.exists():
             init_marker_path.unlink()
-        for path in [paths["descriptions"], paths["interfaces"], paths["registry"], paths["libraries"]]:
-            if path.exists() and path.is_dir():
-                shutil.rmtree(path, ignore_errors=True)
-            path.mkdir(parents=True, exist_ok=True)
+        # TODO: LETS SEE HOW IT BEHAVES WITHOUT DELETEIND
+        # for path in [paths["descriptions"], paths["interfaces"], paths["registry"], paths["libraries"]]:
+        #     if path.exists() and path.is_dir():
+        #         shutil.rmtree(path, ignore_errors=True)
+        #     if path.exists() and path.is_file():
+        #         path.unlink()
+        #     path.mkdir(parents=True, exist_ok=True)
 
     print(f"Initializing RPP home at: {paths['home']}. This may take a while...")
 
-    initialized_plugins = _initialize_common_plugins(paths, common_plugins_dir, init_anot_only=init_anot_only)
+    initialized_plugins = _initialize_common_plugins(paths,
+        common_plugins_dir, init_anot_only=init_anot_only, override=override_initialization)
 
     plugins_list_str = [plugin["PluginTypeName"] for plugin in initialized_plugins]
     init_payload = build_initialization_payload(rp.SCHEMA_VERSION, plugins_list_str)
