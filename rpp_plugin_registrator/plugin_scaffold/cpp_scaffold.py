@@ -43,7 +43,7 @@ def parse_type_name_from_type_info(type_info: TypeInfo,
         return PRIMITIVE_TYPE_MAP.get(type_info["Name"], type_info["Name"])
     elif type_info["Kind"] == "list":
         element_type_name = parse_type_name_from_type_info(type_info["ElementType"], type_aliases, include_types, lib_name=lib_name)
-        return f"std::vector<{element_type_name}>"
+        return f"{element_type_name}::List>"
     elif type_info["Kind"] == "struct":
         capnp_type_display_name = type_info.get("CapnpTypeDisplayName", "")
         splits = capnp_type_display_name.split('/')
@@ -83,9 +83,12 @@ def create_function_prototype(method: dict, type_aliases: list = None,
         elif param["Type"]["Kind"] == "list":
             element_type_name = parse_type_name_from_type_info(
                 param["Type"]["ElementType"], type_aliases, include_types, lib_name=lib_name)
-            if param["Type"]["ElementType"]["Kind"] == "struct":
-                element_type_name += "::Const"
-            type_name = f"const std::vector<{element_type_name}>&"
+            element_type_kind = param["Type"]["ElementType"]["Kind"]
+            if element_type_kind == "struct":
+                type_name = f"{element_type_name}::Const::List"
+            elif element_type_kind == "primitive":
+                type_name = f"rpp::ListConst<{element_type_name}>"
+
         param_types_and_names.append(f"{type_name} {param['Name']}")
     params = ", ".join(param_types_and_names)
 
@@ -98,9 +101,11 @@ def create_function_prototype(method: dict, type_aliases: list = None,
         elif result["Type"]["Kind"] == "list":
             element_type_name = parse_type_name_from_type_info(
                 result["Type"]["ElementType"], type_aliases, include_types, lib_name=lib_name)
-            if result["Type"]["ElementType"]["Kind"] == "struct":
-                element_type_name += "::Const"
-            type_name = f"std::vector<{element_type_name}>"
+            element_type_kind = result["Type"]["ElementType"]["Kind"]
+            if element_type_kind == "struct":
+                type_name = f"{element_type_name}::Const::List"
+            else:
+                type_name = f"rpp::ListConst<{element_type_name}>"
         result_types.append(type_name)
 
 
@@ -133,21 +138,8 @@ def generate_methods_for_foreign_language_adapter_client(methods: list) -> str:
         indent = " " * 8
         for param in method["Params"]:
             capnp_field_name = adapt_capnp_field_name(param["Name"])
-            if param["Type"]["Kind"] == "list":
-                element_type = parse_type_name_from_type_info(param["Type"]["ElementType"])
-                if param["Type"]["ElementType"]["Kind"] == "struct":
-                    set_method = "setWithCaveats"
-                else:
-                    set_method = "set"
-                param_setters.append(
-                    f"{indent}auto {param['Name']}_list = request.init{capnp_field_name}({param['Name']}.size());\n" \
-                    + f"{indent}for (size_t i = 0; i < {param['Name']}.size(); ++i) {{\n" \
-                    + f"{indent}    {param['Name']}_list.{set_method}(i, {param['Name']}[i]);\n"
-                    + f"{indent}}}\n"
-                )
-            else:
-                param_setters.append("        request.set" \
-                    + f"{capnp_field_name}({param['Name']});")
+            param_setters.append("        request.set" \
+                + f"{capnp_field_name}({param['Name']});")
 
         param_setters = "\n".join(param_setters)
         result_getters = []
@@ -164,15 +156,10 @@ def generate_methods_for_foreign_language_adapter_client(methods: list) -> str:
                 if result["Type"]["ElementType"]["Kind"] == "struct":
                     element_type_name += "::Const"
                 response_handling += f'''
-{indent}auto {result['Name']}_capnplist = response.get{adapt_capnp_field_name(result['Name'])}();
-{indent}std::vector<{element_type_name}> {result['Name']}_vec;
-{indent}{result['Name']}_vec.reserve({result['Name']}_capnplist.size());
-{indent}for (size_t i = 0; i < {result['Name']}_capnplist.size(); ++i) {{
-{indent}    {result['Name']}_vec.push_back({result['Name']}_capnplist[i]);
-{indent}}}
+{indent}auto {result['Name']} = response.get{adapt_capnp_field_name(result['Name'])}();
 
 '''
-                result_getters.append(f"std::move({result['Name']}_vec)")
+                result_getters.append(f"{result['Name']}")
             else:
                 result_getters.append(f"response.get{adapt_capnp_field_name(result['Name'])}()")
         if len(method["Results"]) == 1:
@@ -206,23 +193,7 @@ def generate_methods_for_foreign_language_adapter_server(lib_name: str, class_na
         body_lines = []
         indent = " " * 8
         for param in method["Params"]:
-            if param["Type"]["Kind"] == "list":
-                body_lines.append(f"{indent}auto {param['Name']}_capnp = context.getParams().get{adapt_capnp_field_name(param['Name'])}();\n")
-                element_type_name = parse_type_name_from_type_info(param["Type"]["ElementType"], lib_name=lib_name)
-                if param["Type"]["ElementType"]["Kind"] == "struct":
-                    # Take it from the backend_ type, because the struct may be defined in another library
-                    element_type_name = f"typename std::remove_pointer_t<decltype(backend_)>::{element_type_name}::Const"
-                body_lines.append(f'''
-{indent}std::vector<{element_type_name}> {param['Name']};
-{indent}{param['Name']}.reserve({param['Name']}_capnp.size());
-{indent}for (size_t i = 0; i < {param['Name']}_capnp.size(); ++i) {{
-{indent}    {param['Name']}.push_back({param['Name']}_capnp[i]);
-{indent}}}
-
-'''
-                )
-            else:
-                body_lines.append(f"{indent}auto {param['Name']} = context.getParams().get{adapt_capnp_field_name(param['Name'])}();\n")
+            body_lines.append(f"{indent}auto {param['Name']} = context.getParams().get{adapt_capnp_field_name(param['Name'])}();\n")
         params_expr = ", ".join([f"{param['Name']}" for param in method["Params"]])
 
         body_lines.append(f"{indent}// Call the backend method and set the results in the context\n")
@@ -234,46 +205,14 @@ def generate_methods_for_foreign_language_adapter_server(lib_name: str, class_na
             # If has return values, handle them
             body_lines.append(f"{indent}auto result = backend_->{method_name}({params_expr});\n")
 
-            def result_list_body(field_name, set_method, indent, tuple_index=None):
-                if tuple_index is not None:
-                    idx_suffix = f"{tuple_index}"
-                    result_expression = f"std::get<{tuple_index}>(result)"
-                else:
-                    idx_suffix = ""
-                    result_expression = "result"
-                return f'''
-{indent}auto {field_name}_list{idx_suffix} = context.getResults().init{adapt_capnp_field_name(field_name)}({result_expression}.size());
-{indent}for (size_t i = 0; i < {result_expression}.size(); ++i) {{
-{indent}    {field_name}_list{idx_suffix}.{set_method}(i, {result_expression}[i]);
-{indent}}}
-'''
-
             if len(method["Results"]) == 1:
                 result = method["Results"][0]
-                if result["Type"]["Kind"] == "list":
-                    element_type_name = parse_type_name_from_type_info(result["Type"]["ElementType"], lib_name=lib_name)
-                    if result["Type"]["ElementType"]["Kind"] == "struct":
-                        element_type_name += "::Const"
-                        set_method = "setWithCaveats"
-                    else:
-                        set_method = "set"
-                        body_lines.append(result_list_body(result["Name"], set_method, indent))
-                else:
-                    result_name = adapt_capnp_field_name(result["Name"])
-                    body_lines.append(f"{indent}context.getResults().set{result_name}(result);\n")
+                result_name = adapt_capnp_field_name(result["Name"])
+                body_lines.append(f"{indent}context.getResults().set{result_name}(result);\n")
             else:
                 for index, result in enumerate(method["Results"]):
-                    if result["Type"]["Kind"] == "list":
-                        element_type_name = parse_type_name_from_type_info(result["Type"]["ElementType"], lib_name=lib_name)
-                        if result["Type"]["ElementType"]["Kind"] == "struct":
-                            element_type_name += "::Const"
-                            set_method = "setWithCaveats"
-                        else:
-                            set_method = "set"
-                        body_lines.append(result_list_body(result["Name"], set_method, indent, tuple_index=index))
-                    else:
-                        result_name = adapt_capnp_field_name(result["Name"])
-                        body_lines.append(f"{indent}context.getResults().set{result_name}(std::get<{index}>(result));\n")
+                    result_name = adapt_capnp_field_name(result["Name"])
+                    body_lines.append(f"{indent}context.getResults().set{result_name}(std::get<{index}>(result));\n")
             body_lines.append(f"{indent}return ::kj::READY_NOW;\n")
         if params_expr or len(method["Results"]) > 0:
             context_if_arguments = "context"
@@ -459,8 +398,6 @@ def scaffold_structs(structs: Dict[str, StructInfo],
             file_path = output_path / "cpp" / "rpp_schema" / lib_name / struct_file_name
         else:
             file_path = output_path
-        if file_path.exists():
-            return  # Avoid overwriting existing files
 
         type_aliases = []
         include_types = []
@@ -544,23 +481,7 @@ public:
             Const shallow_copy() const {{
                 return Const(this->reader_);
             }}
-'''
-        for list_type in list_types:
-            field_name = list_type.name
-            element_type = list_type.type.element_type
-            element_reader_type = parse_type_name_from_type_info(element_type, lib_name=lib_name)
-            if element_type.kind == "struct":
-                element_reader_type += "::Const"
-            field_name_pascal = to_pascal_case(field_name)
-            content += f'''
-            struct {field_name}_ListProxy {{
-                private:
-                    schema::{lib_name}::{struct_name}::Reader r;
-                public:
-                    {field_name}_ListProxy(schema::{lib_name}::{struct_name}::Reader r) : r(r) {{}}
-                    size_t size() const {{ return r.has{field_name_pascal}() ? r.get{field_name_pascal}().size() : 0;}}\n
-                    {element_reader_type} operator[](size_t index) const {{ return r.get{field_name_pascal}()[index]; }}\n
-            }};\n
+        using List = rpp::ListConst<{struct_name}>;
 '''
 
         # FIELD ACCESSORS
@@ -573,8 +494,13 @@ public:
             inline {field_type}::Const {field_name}() const {{ return {field_type}::Const(reader_.get{field_name_pascal}()); }}\n
 '''
             elif field.type.kind == "list":
+                element_type = parse_type_name_from_type_info(field.type.element_type, lib_name=lib_name)
+                if field.type.element_type.kind == "struct":
+                    list_type = f"{element_type}::Const::List"
+                else:
+                    list_type = f"rpp::ListConst<{element_type}>"
                 content += f'''
-            inline {field_name}_ListProxy {field_name}() const {{ return {field_name}_ListProxy{{reader_}}; }}\n
+            inline {list_type} {field_name}() const {{ return {list_type}{{reader_.get{field_name_pascal}()}}; }}\n
 '''
             else:
                 getter_suffix = ""
@@ -594,6 +520,8 @@ public:
         std::unique_ptr<capnp::MallocMessageBuilder> msg_builder_;
         schema::{lib_name}::{struct_name}::Builder builder_;
 
+    public:
+        using List = rpp::List<{struct_name}>;
 '''
         for field in struct.fields:
             if field.type.kind == "primitive":
@@ -615,58 +543,11 @@ public:
                 }}
         }};
 '''
-            elif field.type.kind == "list":
-                name = field.name
-                element_type_name = parse_type_name_from_type_info(field.type.element_type, lib_name=lib_name)
-                element_type_kind = field.type.element_type.kind
-                if element_type_kind == "struct":
-                    element_type_name_const = f"{element_type_name}::Const"
-                else:
-                    element_type_name_const = element_type_name
-                content += f'''
-        struct {name}_ListProxy {{
-            private:
-                schema::{lib_name}::{struct_name}::Builder& builder_;
-            public:
-                {name}_ListProxy(schema::{lib_name}::{struct_name}::Builder& builder) : builder_(builder) {{}}
-                size_t size() const {{ return builder_.asReader().get{to_pascal_case(name)}().size(); }}
-                void init(size_t new_size) {{ builder_.init{to_pascal_case(name)}(new_size); }}
-
-                {element_type_name_const} operator[](size_t index) const {{
-                    return {element_type_name_const}(builder_.asReader().get{to_pascal_case(name)}()[index]);
-                }}
-'''
-                if element_type_kind == "primitive":
-                    content += f'''
-                struct {name}_ElementProxy {{
-                    private:
-                        capnp::List<{element_type_name}>::Builder b;
-                        size_t idx;
-                    public:
-                        {name}_ElementProxy(capnp::List<{element_type_name}>::Builder b, size_t idx) : b(b), idx(idx) {{}}
-                        operator {element_type_name}() const {{ return b.asReader()[idx]; }}
-
-                        {name}_ElementProxy& operator=({element_type_name} value) {{
-                            b.set(idx, value);
-                            return *this;
-                        }}
-                }};
-
-                {name}_ElementProxy operator[](size_t index) {{
-                    return {name}_ElementProxy{{builder_.get{to_pascal_case(name)}(), index}};
-                }}
-'''
-                else:
-                    content += f'''                {element_type_name} operator[](size_t index) {{
-                    return {element_type_name}(builder_.get{to_pascal_case(name)}()[index]);
-                }}
-'''
-                content += '        };\n'
-
 
         content += f'''
     public:
-
+        using IsRppStruct = void;
+        using CapnpType = schema::{lib_name}::{struct_name};
         {struct_name}()
             : msg_builder_(std::make_unique<capnp::MallocMessageBuilder>()),
               builder_(msg_builder_->initRoot<schema::{lib_name}::{struct_name}>()) {{}}
@@ -692,9 +573,21 @@ public:
         {type_name} {name}() const {{ return builder_.asReader().get{to_pascal_case(name)}(); }}
 '''
             elif field.type.kind == "list":
+                element_type_name = parse_type_name_from_type_info(field.type.element_type, lib_name=lib_name)
+                if field.type.element_type.kind == "struct":
+                    list_type = f"{element_type_name}::List"
+                    const_list_type = f"{element_type_name}::Const::List"
+                else:
+                    list_type = f"rpp::List<{element_type_name}>"
+                    const_list_type = f"rpp::ListConst<{element_type_name}>"
                 content += f'''
-        {name}_ListProxy {name}() {{ return {name}_ListProxy{{builder_}}; }}
-        const Const::{name}_ListProxy {name}() const {{ return Const::{name}_ListProxy{{builder_}}; }}
+        {list_type} {name}() {{ return {list_type}{{builder_.get{to_pascal_case(name)}(),
+                [this](size_t new_size) {{
+                    return builder_.init{to_pascal_case(name)}(new_size);
+                }}
+            }};
+        }}
+        {const_list_type} {name}() const {{ return {const_list_type}{{builder_.asReader().get{to_pascal_case(name)}()}}; }}
 '''
             else:
                 content += f'''

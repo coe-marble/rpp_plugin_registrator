@@ -424,7 +424,7 @@ class LibraryManager:
         exts = get_supported_plugin_type_extensions()
         for plugin_type_path in self._iter_registration_files(path,
                 plugins.get(LIBRARY_PLUGIN_TYPES_KEY, []), exts, "Plugin type"):
-            infos = ptyp_reg_api.register_plugin_type_from_source(plugin_type_path, lib_name)
+            infos = ptyp_reg_api.register_plugin_type_from_source(plugin_type_path, lib_name, override=True)
             self.add_to_manifest(lib_name, plugin_type_or_list=infos)
 
         exts = get_supported_plugin_extensions()

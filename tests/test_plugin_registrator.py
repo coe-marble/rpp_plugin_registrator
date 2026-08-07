@@ -622,7 +622,40 @@ class CppPluginRegistratorTests(unittest.TestCase):
 
             so_path = rp.get_app_registry_path() / "cpp" / "shared" / "TestLib" / "plugins" / "ComponentPluginWithDependencies.so"
             self.assertTrue(so_path.exists(), f"Expected shared library '{so_path}' does not exist.")
+    def test_register_cpp_plugin_with_all_interface_types(self):
+        with tempfile.TemporaryDirectory() as td:
+            temp_root = Path(td)
+            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::test"
+            manager = LibraryManager(rpp_home=temp_root / ".rpp")
+            rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
+            manager.get_or_create_plugin_library("rpp_testing")
+            handle = manager.get_or_create_plugin_library("TestLib")
 
+            library_root = Path(handle.path)
+            plugin_dir = library_root / "plugins"
+            plugin_dir.mkdir(parents=True, exist_ok=True)
+
+            plugin_path = plugin_dir / "TestInterfaceAll.cpp"
+            shutil.copyfile(
+                EXAMPLES_DATA_PATH / "example_plugins" / "example_all_interface_types_cpp.cpp",
+                plugin_path,
+            )
+
+            manager.register_plugin_from_source(plugin_path, "TestLib")
+
+            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            self.assertIn("Plugins", manifest_payload)
+            self.assertIn("TestLib::AllInterfaceTypesCpp", manifest_payload["Plugins"])
+            abs_path = manager.get_plugin_path_absolute(
+                manifest_payload["Plugins"]["TestLib::AllInterfaceTypesCpp"]["PluginPath"],
+                "TestLib",
+            )
+            self.assertEqual(
+                str(abs_path),
+                str(plugin_path.resolve()),
+            )
 
 if __name__ == "__main__":
     unittest.main()

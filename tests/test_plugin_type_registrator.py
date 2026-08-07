@@ -553,14 +553,14 @@ struct DisturbanceData {
 
     def plugin_type_src3(self):
         return """
-@0xaaaaaaaa00000007;
-struct Pose2D {
+@0xaaaaaaaa00000009;
+struct TestStruct1 {
     x @0 :Float64;
     y @1 :Float64;
     theta @2 :Float64;
 }
 
-struct Twist2D {
+struct TestStruct2 {
     linear @0 :Float64;
     angular @1 :Float64;
 }
@@ -569,12 +569,12 @@ using Anot = import "rpp_common/anot.capnp";
 interface TestType1 $Anot.plugin("test") {
   funcEmpty @0 () -> ();
   funcWithSimpleParams @1 (paramFloat :Float64, paramBool :Bool) -> (resultFloat :Float64);
-  funcWithStructParam @2 (paramPose :Pose2D, paramTwist :Twist2D) -> (resultPose :Pose2D);
-  funcWithListParam @3 (paramListFloat :List(Float64), paramListPose :List(Pose2D)) -> (resultList :List(Float64));
-  funcWithListOfStructParam @4 (paramListPose :List(Pose2D)) -> (resultListTwist :List(Twist2D));
+  funcWithStructParam @2 (paramStruct1 :TestStruct1, paramStruct2 :TestStruct2) -> (resultStruct1 :TestStruct1);
+  funcWithListParam @3 (paramListFloat :List(Float64), paramListStruct :List(TestStruct1)) -> (resultList :List(Float64));
+  funcWithListOfStructParam @4 (paramListStruct :List(TestStruct1)) -> (resultListStruct2 :List(TestStruct2));
   funcWithMultipleSimpleReturns @5 () -> (resultFloat :Float64, resultBool :Bool);
-  funcWithMultipleStructReturns @6 () -> (resultPose :Pose2D, resultTwist :Twist2D);
-  funcWithMultipleListReturns @7 () -> (resultListFloat :List(Float64), resultListPose :List(Pose2D));
+  funcWithMultipleStructReturns @6 () -> (resultStruct1 :TestStruct1, resultStruct2 :TestStruct2);
+  funcWithMultipleListReturns @7 () -> (resultListFloat :List(Float64), resultListStruct :List(TestStruct1));
 }
 """
 

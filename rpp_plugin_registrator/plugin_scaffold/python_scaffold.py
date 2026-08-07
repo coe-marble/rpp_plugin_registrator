@@ -20,8 +20,8 @@ _PRIMITIVE_TYPE_MAP = {
     "uint64": ("int", 0),
     "float32": ("float", 0.0),
     "float64": ("float", 0.0),
-    "string": ("str", ""),
-    "text": ("str", ""),
+    "string": ("str", '""'),
+    "text": ("str", '""'),
     "bool": ("bool", False),
 }
 
@@ -74,17 +74,16 @@ def generate_structs(description: PluginTypeInfo, output_path: Path) -> None:
     if description.parse_data is None or description.parse_data.structs is None:
         return
     for struct_name, struct in description.parse_data.structs.items():
-        imports = ["from typing import List, Dict, Any, Tuple",
-                   "from dataclasses import dataclass, field"]
+        imports = ["from typing import List, Dict, Any, Tuple"]
         field_lines = []
         for field in struct.fields:
             field_type_parsed = parse_field_type(field.type, library_name, imports)
             if field.type.kind == "struct":
                 field_lines.append(f"{field.name}: {field_type_parsed}"
-                    + f" = field(default_factory={field_type_parsed})")
+                    + f" = Field(default_factory={field_type_parsed})")
             elif field.type.kind == "list":
                 field_lines.append(
-                    f"{field.name}: {field_type_parsed} = field(default_factory=list)")
+                    f"{field.name}: {field_type_parsed} = Field(default_factory=list)")
             else:
                 type_name = field.type.name
                 if type_name not in _PRIMITIVE_TYPE_MAP:
@@ -99,15 +98,20 @@ def generate_structs(description: PluginTypeInfo, output_path: Path) -> None:
         imports_str = "\n".join(imports)
 
         content = f'''
-from pydantic import BaseModel, ConfigDict, ValidationError
+from typing import List, Dict, Any, Tuple
+from pydantic import (
+    BaseModel, ConfigDict, RootModel,
+    ValidationError, Field
+)
+from pydantic.dataclasses import dataclass
 {imports_str}
 
-class {struct_name}(BaseModel):
-
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+@dataclass(config=ConfigDict(extra="forbid", validate_assignment=True))
+class {struct_name}:
 
     def as_dict(self) -> Dict[str, Any]:
-        return self.model_dump()
+
+        return RootModel(self).model_dump()
 
     {field_str}
     '''

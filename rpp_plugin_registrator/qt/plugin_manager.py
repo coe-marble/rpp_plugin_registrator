@@ -196,6 +196,7 @@ class RPPPluginManager(QMainWindow):
         self.refreshBtn.setEnabled(True)
         self.selected_item_type = "plugin"
 
+
     def _on_plugin_type_row_clicked(self, item):
         del item # unused variable
         # Keep selection mutually exclusive between script component tree and workspace component tree.
@@ -303,6 +304,8 @@ class RPPPluginManager(QMainWindow):
                 return
             self.log("Library registered.")
             self.load_plugins()
+            lib_name = self.lib_manager.lib_name_from_path(path)
+            self.select_library(lib_name)
 
         def run():
             self.lib_manager.register_plugin_library(Path(path), link_register=link_install)
@@ -439,6 +442,8 @@ class RPPPluginManager(QMainWindow):
                     remove_from_json=False, throw_if_not_found=False)
                 full_path = Path(lib_path) / plugin.get("PluginPath", "")
                 self.lib_manager.register_plugin_from_source(full_path, lib)
+                self.select_library(lib)
+                self.select_plugin(plugin.get("PluginName", ""))
         self._do_fn(run, on_finish)
 
 
@@ -486,6 +491,7 @@ class RPPPluginManager(QMainWindow):
             else:
                 self.log(f"Plugin type '{full_plugin_path}' registered in library '{lib}'.")
                 self.load_plugins()
+                self.select_library(lib)
 
         self._do_fn(run, on_finish)
 
@@ -571,7 +577,13 @@ class RPPPluginManager(QMainWindow):
             QMessageBox.warning(self, "Warning", "No library selected.")
             return
 
-        selected_plugins = self.active_plugins
+        if self.selected_item_type == "plugin_type":
+            QMessageBox.warning(self, "Warning", "Plugin type unregister is not implemented yet.")
+            return
+
+        selected_plugins = self.pluginTableWidget.selectedItems()
+        selected_plugins = [p for p in selected_plugins if p.column() == 0]  # only first column items
+
         if not selected_plugins:
             QMessageBox.warning(self, "Warning", "No plugin selected.")
             return
@@ -584,9 +596,10 @@ class RPPPluginManager(QMainWindow):
             return
 
         for p in selected_plugins:
-            name = p.findChild(QLabel).text()
-            self.lib_manager.unregister_plugin(name, lib)
-            self.log(f"Plugin '{name}' unregistered from library '{lib}'.")
+            plugin = p.data(QtCore.Qt.ItemDataRole.UserRole)
+            plugin_name = plugin.get("PluginName", "")
+            self.lib_manager.unregister_plugin(plugin_name)
+            self.log(f"Plugin '{plugin_name}' unregistered from library '{lib}'.")
         self.load_plugins()
 
     def unregister_library(self):
@@ -614,25 +627,6 @@ class RPPPluginManager(QMainWindow):
 
         self.active_plugins = []
 
-    def on_plugin_selected(self, widget):
-        if widget:
-
-            # if ctrl is pressed, allow multiple selection
-            if not (QApplication.keyboardModifiers() & QtCore.Qt.KeyboardModifier.ControlModifier):
-                self.clear_selected_plugins()
-            # if already selected, deselect
-            if widget in self.active_plugins:
-                widget.setStyleSheet("border: 1px solid transparent;")
-                self.active_plugins.remove(widget)
-                return
-
-
-            # set border only for this widget, not for its children
-            widget.setStyleSheet("border: 1px solid #ff7e67;")
-            for c in widget.children():
-                if isinstance(c, QWidget):
-                    c.setStyleSheet("border: 1px solid transparent;")
-            self.active_plugins.append(widget)
 
     def get_active_library(self):
         selected_items = self.libraryListWidget.selectedItems()
