@@ -1,6 +1,8 @@
 import sys, os, subprocess
 from pathlib import Path
 
+DEFAULT_EDITOR = "cursor"
+
 def clear_form_layout(form_layout):
     while form_layout.count():
         item = form_layout.takeAt(0)
@@ -24,7 +26,9 @@ def open_folder(path):
     else:
         subprocess.Popen(["xdg-open", path])
 
-def open_file_in_editor(path):
+def open_file_in_editor(path, editor=DEFAULT_EDITOR):
+    if editor is None:
+        editor = DEFAULT_EDITOR
     if path is None or not os.path.exists(path):
         raise FileNotFoundError(f"The specified path does not exist: {path}")
     if sys.platform == 'win32':
@@ -34,7 +38,7 @@ def open_file_in_editor(path):
     else:  # Linux, Unix
         # subprocess.call(['xdg-open', path])
         if Path(path).is_file():
-            subprocess.call(['code', path])
+            subprocess.call([editor, path])
         else:
             subprocess.call(['xdg-open', path])
 

@@ -657,5 +657,40 @@ class CppPluginRegistratorTests(unittest.TestCase):
                 str(plugin_path.resolve()),
             )
 
+    def test_register_cpp_plugin_with_data_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            temp_root = Path(td)
+            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::DisturbanceGenerator2D"
+            manager = LibraryManager(rpp_home=temp_root / ".rpp")
+            rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
+            manager.get_or_create_plugin_library("rpp_testing")
+            handle = manager.get_or_create_plugin_library("TestLib")
+
+            library_root = Path(handle.path)
+            plugin_dir = library_root / "plugins"
+            plugin_dir.mkdir(parents=True, exist_ok=True)
+
+            plugin_path = plugin_dir / "ComponentPluginWithDataFields.cpp"
+            shutil.copyfile(
+                EXAMPLES_DATA_PATH / "example_plugins" / "example_data_interface_cpp.cpp",
+                plugin_path,
+            )
+
+            manager.register_plugin_from_source(plugin_path, "TestLib")
+
+            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            self.assertIn("Plugins", manifest_payload)
+            self.assertIn("TestLib::DataInterfaceCpp", manifest_payload["Plugins"])
+            abs_path = manager.get_plugin_path_absolute(
+                manifest_payload["Plugins"]["TestLib::DataInterfaceCpp"]["SourceFile"],
+                "TestLib",
+            )
+            self.assertEqual(
+                str(abs_path),
+                str(plugin_path.resolve()),
+            )
+
 if __name__ == "__main__":
     unittest.main()

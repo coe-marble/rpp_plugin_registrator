@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 import os
 
 from rpp_plugin_registrator.plugin_descriptors.core import (
+    ParsePluginTypeData,
     PluginTypeInfo,
     PluginTypeValidationResult, \
     apply_library_context_to_plugin_type,
@@ -170,18 +171,18 @@ def ensure_rpp_layout(
 
     init_marker_path = paths["home"] / rp.INITIALIZED_MARKER_FILENAME
     if init_marker_path.exists() and not override_initialization:
-        return
+        return []
 
     if override_initialization:
         if init_marker_path.exists():
             init_marker_path.unlink()
         # TODO: LETS SEE HOW IT BEHAVES WITHOUT DELETEIND
-        # for path in [paths["descriptions"], paths["interfaces"], paths["registry"], paths["libraries"]]:
-        #     if path.exists() and path.is_dir():
-        #         shutil.rmtree(path, ignore_errors=True)
-        #     if path.exists() and path.is_file():
-        #         path.unlink()
-        #     path.mkdir(parents=True, exist_ok=True)
+        for path in [paths["descriptions"], paths["interfaces"], paths["registry"], paths["libraries"]]:
+            if path.exists() and path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            if path.exists() and path.is_file():
+                path.unlink()
+            path.mkdir(parents=True, exist_ok=True)
 
     print(f"Initializing RPP home at: {paths['home']}. This may take a while...")
 
@@ -252,8 +253,8 @@ def register_plugin_type(
     return entry
 
 
-def register_plugin_type_supporting_file(source_file: Path, library: str, parse_data: Dict[str, Any]) -> None:
-
+def register_plugin_type_supporting_file(source_file: Path,
+        library: str, parse_data: ParsePluginTypeData) -> None:
     data = PluginTypeInfo(
         info={
             "SourceFile": str(source_file),
@@ -266,14 +267,14 @@ def register_plugin_type_supporting_file(source_file: Path, library: str, parse_
         parse_data=parse_data,
         validation_data=None,
     )
-    register_data_result = register_plugin_type_dispatch(data)
+    register_data_result = register_plugin_type_dispatch(data, override=True)
     if not register_data_result.success:
         raise ValueError(f"Failed to register plugin type from file '{source_file}': {register_data_result.message}")
     data.register_data = register_data_result.register_data
     scaffold_and_generate_from_description(data, only_stubs=True)
 
 def register_plugin_type_from_source(source_file: Path,
-        library: str, whitelist_plugins: List[str] = None,
+        library: str, whitelist_plugins: List[str] | None = None,
         override: bool = False) -> list[dict[str, Any]]:
 
     """Register a plugin type from a source file and return the registered plugin type information.
@@ -351,23 +352,15 @@ def unregister_plugin_type(plugin_name: str) -> bool:
 def validate_plugin_type(plugin_type_info: PluginTypeInfo,
         plugin_types: Dict[str, Any], exists_ok: bool = False) -> PluginTypeValidationResult:
 
-    registry_id = plugin_type_info.info.get("PluginTypeName")
-    if exists_ok:
-        return PluginTypeValidationResult(
-            is_valid=True,
-            message=f"Plugin type '{registry_id}' is valid.",
-            validation_data=None
-        )
-
-
-    ok = validate_unique_plugin_id(registry_id, plugin_types)
-
-    if not ok:
-        return PluginTypeValidationResult(
-            is_valid=False,
-            message=f"Plugin type '{registry_id}' is not unique in the registry.",
-            validation_data=None
-        )
+    registry_id = plugin_type_info.info.get("PluginTypeName", "")
+    if not exists_ok:
+        ok = validate_unique_plugin_id(registry_id, plugin_types)
+        if not ok:
+            return PluginTypeValidationResult(
+                is_valid=False,
+                message=f"Plugin type '{registry_id}' is not unique in the registry.",
+                validation_data=None
+            )
 
     return validate_plugin_type_dispatch(plugin_type_info)
 

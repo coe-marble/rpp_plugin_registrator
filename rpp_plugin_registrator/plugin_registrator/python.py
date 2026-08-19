@@ -72,9 +72,8 @@ def parse_plugin_components(comps: Dict[str, str]):
     for comp_name, comp_type in comps.items():
         if not isinstance(comp_name, str):
             raise ValueError("Component names be strings.")
-        if not isinstance(comp_type, str) \
-            and not (isinstance(comp_type, list) and all(isinstance(t, str) for t in comp_type)):
-            raise ValueError("Component types must be strings or lists of strings."
+        if not isinstance(comp_type, str):
+            raise ValueError("Component types must be strings ."
                 + f" Got: {comp_type} ({type(comp_type)})")
         parsed_components[comp_name] = comp_type
     return parsed_components
@@ -143,7 +142,8 @@ def register_python_plugin(info: PluginInfo) -> PluginRegistrationResult:
             message=f"Source file '{source_file}' does not exist.",
         )
 
-    module = import_module_from_path(str(source_file))
+    module = import_module_from_path(str(source_file),
+            allow_relative_imports=True)
 
     module_class = getattr(module, class_name, None)
     if module_class is None:

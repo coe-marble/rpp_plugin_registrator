@@ -23,6 +23,7 @@ _PRIMITIVE_TYPE_MAP = {
     "string": ("str", '""'),
     "text": ("str", '""'),
     "bool": ("bool", False),
+    "data": ("bytes", "b''"),
 }
 
 def update_init_file(directory: Path, class_name: str) -> None:

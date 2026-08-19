@@ -33,7 +33,8 @@ def read_capnp_schema_id(source_text: str) -> str:
 
 
 def register_capnp_plugin_type(
-    desc
+    desc,
+    override: bool = False
 ) -> PluginTypeRegistrationResult:
 
     info = desc.info
@@ -46,7 +47,7 @@ def register_capnp_plugin_type(
         lib_interfaces_path.mkdir(parents=True, exist_ok=True)
 
     destination_file_path = lib_interfaces_path / file_name
-    if destination_file_path.exists():
+    if destination_file_path.exists() and not override:
         existing_text = destination_file_path.read_text(encoding="utf-8")
         existing_id = read_capnp_schema_id(existing_text)
         return PluginTypeRegistrationResult(

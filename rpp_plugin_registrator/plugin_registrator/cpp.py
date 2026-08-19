@@ -89,7 +89,7 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode != 0:
             return f"Compilation failed for plugin class '{class_name}'" \
-                + f" in file '{source_file}': {result.stderr.decode()}", compile_cmd
+                + f" in file '{source_file}': {result.stderr.decode()}", compile_cmd, out_file_path
     except subprocess.CalledProcessError as e:
         full_command = " ".join(compile_cmd)
         return f"Error during compilation of class '{class_name}'" \
@@ -129,7 +129,7 @@ def compile_cpp_plugin_type(source_file:str, plugin_type_info: PluginTypeInfo,
         class_name=class_name,
         suppress_warnings=suppress_warnings,
         print_to_console=print_to_console,
-        verbose=False
+        verbose=verbose
     )
 
 def compile_cpp_plugin(source_file: PluginInfo,

@@ -196,9 +196,9 @@ class PluginRegistrationResult:
 @dataclass
 class PluginTypeInfo:
     info: Dict[str, Any]
-    parse_data: ParsePluginTypeData = None
-    validation_data: PluginTypeValidationData = None
-    register_data: PluginTypeRegisterData = None
+    parse_data: ParsePluginTypeData | None = None
+    validation_data: PluginTypeValidationData | None = None
+    register_data: PluginTypeRegisterData | None = None
 
     def get_interface(self) -> Optional[InterfaceInfo]:
         if self.parse_data and self.parse_data.interfaces:
@@ -211,9 +211,9 @@ class PluginTypeInfo:
 @dataclass
 class PluginInfo:
     info: Dict[str, Any]
-    parse_data: ParsePluginData = None
-    validation_data: PluginValidationData = None
-    register_data: PluginRegisterData = None
+    parse_data: ParsePluginData | None = None
+    validation_data: PluginValidationData | None = None
+    register_data: PluginRegisterData | None = None
 
 
 def plugin_id_from_name(plugin_name: str) -> str:

@@ -95,7 +95,7 @@ def get_cpp_shared_libraries_path(
 
 
 def get_cpp_imports_and_libraries_for_library(
-        library_name: str) -> Tuple[List[str], List[str]]:
+        library_name: str) -> Tuple[List[str], List[str], List[str]]:
 
     def parse_dependency(dep: str) -> Tuple[str, Optional[str], Optional[str]]:
         dep_name = dep

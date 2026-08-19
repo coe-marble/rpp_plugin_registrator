@@ -43,11 +43,12 @@ def unregister_plugin(plugin_info: Dict[str, Any]) -> bool:
     else:
         raise ValueError(f"No unregistrator available for source language '{source_language}'.")
 
-def register_plugin_type(plugin_type_info: PluginTypeInfo) -> PluginTypeRegistrationResult:
+def register_plugin_type(plugin_type_info: PluginTypeInfo,
+        override: bool = False) -> PluginTypeRegistrationResult:
     source_language = plugin_type_info.info["SourceLanguage"].lower()
 
     if source_language == "capnp":
-        register_data = register_capnp_plugin_type(plugin_type_info)
+        register_data = register_capnp_plugin_type(plugin_type_info, override=override)
     else:
         raise ValueError(f"No registrator available for source language '{source_language}'.")
 

@@ -24,7 +24,8 @@ def _extract_plugin_type_from_mro(plugin_class: type, plugin_types: Dict[str, Pl
 
 
 def _get_plugin_class(source_file: Path, class_name: str) -> Optional[type]:
-    plugin_module = import_module_from_path(str(source_file))
+    plugin_module = import_module_from_path(str(source_file),
+        allow_relative_imports=True)
 
     if not hasattr(plugin_module, class_name):
         raise ValueError(f"Class '{class_name}' not found in module '{plugin_module.__name__}' from file '{source_file}'.")

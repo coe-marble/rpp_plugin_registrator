@@ -30,6 +30,7 @@ PRIMITIVE_TYPE_MAP = {
     "float32": "float",
     "float64": "double",
     "text": "std::string",
+    "data": "rpp::Data",
 }
 
 
@@ -88,6 +89,8 @@ def create_function_prototype(method: dict, type_aliases: list = None,
                 type_name = f"{element_type_name}::Const::List"
             elif element_type_kind == "primitive":
                 type_name = f"rpp::ListConst<{element_type_name}>"
+        elif param["Type"]["Kind"] == "primitive" and param["Type"]["Name"] == "data":
+            type_name = "rpp::DataConst"
 
         param_types_and_names.append(f"{type_name} {param['Name']}")
     params = ", ".join(param_types_and_names)
@@ -106,6 +109,8 @@ def create_function_prototype(method: dict, type_aliases: list = None,
                 type_name = f"{element_type_name}::Const::List"
             else:
                 type_name = f"rpp::ListConst<{element_type_name}>"
+        elif result["Type"]["Kind"] == "primitive" and result["Type"]["Name"] == "data":
+            type_name = "rpp::DataConst"
         result_types.append(type_name)
 
 
@@ -341,7 +346,10 @@ def generate_plugin_type_foreign_language_adapter_server_hpp(description: Plugin
 
 def make_as_struct_method_string(struct_name : str,
         fields: list, lib_name: str, indent:str, accessor_name: str) -> str:
-    list_types = [field for field in fields if field.type.kind == "list"]
+    list_types = [field for field in fields if \
+        field.type.kind == "list"]
+    data_types = [field for field in fields if \
+        field.type.kind == "primitive" and field.type.name == "data"]
     content = f"""
 {indent}{struct_name}_Native as_struct() const {{
 """
@@ -380,7 +388,12 @@ def make_as_struct_method_string(struct_name : str,
         elif field_type.kind == "list":
             content += f"        {indent}std::move({field_name}_vec),\n"
         else:
-            content += f"        {indent}{accessor_name}.get{to_pascal_case(field_name)}(),\n"
+            if field_type.kind == "primitive" and field_type.name == "data":
+                content += f'''
+        {indent}std::vector<uint8_t>({accessor_name}.get{to_pascal_case(field_name)}().begin(), {accessor_name}.get{to_pascal_case(field_name)}().end()),\n
+                '''
+            else:
+                content += f"        {indent}{accessor_name}.get{to_pascal_case(field_name)}(),\n"
 
     content = content.rstrip(",\n")  # Remove the trailing comma and newline
     content += f"\n    {indent}}};\n{indent}}}\n" # end of as_struct method
@@ -436,7 +449,10 @@ struct {struct_name}_Native {{
             elif field.type.kind == "struct":
                 content += f"    {field_type}_Native {field_name};\n"
             else:
-                content += f"    {field_type} {field_name};\n"
+                if field_type == "rpp::Data":
+                    content += f"    std::vector<uint8_t> {field_name};\n"
+                else:
+                    content += f"    {field_type} {field_name};\n"
 
         content += "};\n" # end of Native struct definition
 
@@ -503,10 +519,17 @@ public:
             inline {list_type} {field_name}() const {{ return {list_type}{{reader_.get{field_name_pascal}()}}; }}\n
 '''
             else:
-                getter_suffix = ""
-                if field_type == "std::string":
-                    getter_suffix = ".cStr()"
-                content += f'''
+                if field_type == "rpp::Data":
+                    content += f'''
+            inline rpp::DataConst {field_name}() const {{
+                return rpp::DataConst(reader_.get{field_name_pascal}());
+            }}\n
+'''
+                else:
+                    getter_suffix = ""
+                    if field_type == "std::string":
+                        getter_suffix = ".cStr()"
+                    content += f'''
             inline {field_type} {field_name}() const {{ return reader_.get{field_name_pascal}(){getter_suffix}; }}\n
 '''
 
@@ -568,7 +591,19 @@ public:
             name = field.name
             type_name = parse_type_name_from_type_info(field.type, lib_name=lib_name)
             if field.type.kind == "primitive":
-                content += f'''
+                if type_name == "rpp::Data":
+                    content += f'''
+        rpp::Data {name}() {{
+            return rpp::Data{{builder_.get{to_pascal_case(name)}(),
+                [this](size_t new_size) {{
+                    return builder_.init{to_pascal_case(name)}(new_size);
+                }}
+            }};
+        }}
+        rpp::DataConst {name}() const {{ return rpp::DataConst{{builder_.asReader().get{to_pascal_case(name)}()}}; }}
+'''
+                else:
+                    content += f'''
         {name}_Proxy {name}() {{ return {name}_Proxy{{builder_}}; }}
         {type_name} {name}() const {{ return builder_.asReader().get{to_pascal_case(name)}(); }}
 '''
