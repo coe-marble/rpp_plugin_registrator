@@ -284,7 +284,7 @@ class HelloPlugin(MotionController2D):
         self.assertEqual(hello_item["ClassName"], "HelloPlugin")
         self.assertEqual(hello_item["PluginType"], "rpp_testing::MotionController2D")
         self.assertEqual(hello_item["Library"], "TestLib")
-        self.assertEqual(hello_item["FullyQualifiedClassName"], "<class 'hello_plugin.HelloPlugin'>")
+        self.assertEqual(hello_item["FullyQualifiedClassName"], "<class 'TestLib.hello_plugin.HelloPlugin'>")
         self.assertEqual(hello_item["PluginName"], "TestLib::HelloPlugin")
         self.assertEqual(hello_item["PluginTypeLibrary"], "rpp_testing")
         self.assertTrue("PluginTypeSharedLibraryPath" in hello_item)
