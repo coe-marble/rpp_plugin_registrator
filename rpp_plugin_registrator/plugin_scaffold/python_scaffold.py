@@ -125,7 +125,7 @@ class {struct_name}:
 
 def create_method_prototype_string(method: MethodInfo,
         library_name: str, type_aliases=None,
-        imports=None, append_to_params_call=None) -> str:
+        imports=None, parameter_value_transform=None) -> str:
     param_types_with_names = []
     params_call_backend = []
     for param in method.params:
@@ -134,8 +134,9 @@ def create_method_prototype_string(method: MethodInfo,
                 library_name, imports, import_as_private=True)
         param_types_with_names.append(f"{param.name}: {parsed_type}")
 
-        if append_to_params_call is not None:
-            params_call_backend.append(f"{param.name}={param.name}{append_to_params_call}")
+        if parameter_value_transform is not None:
+            params_call_backend.append(
+                f"{param.name}={parameter_value_transform}({param.name})")
         else:
             params_call_backend.append(f"{param.name}={param.name}")
         if type_aliases is not None:
@@ -211,7 +212,16 @@ def create_adapter_server_methods_string_with_type_alisases_and_imports(
     async {prototype}:
         if self._backend is None:
             raise RuntimeError("Backend is not configured. Please call configure_adapter_server__() first.")
-        return self._backend.{method.name}({params_call_backend})
+        self._logger.debug(
+            f"Received request: component={{self._adapter_server_info.name!r}}, "
+            f"method='{method.name}'.")
+        result = self._backend.{method.name}({params_call_backend})
+        if inspect.isawaitable(result):
+            result = await result
+        self._logger.debug(
+            f"Backend completed: component={{self._adapter_server_info.name!r}}, "
+            f"method='{method.name}'.")
+        return result
 '''
 
     return methods_str, type_aliases, imports
@@ -223,19 +233,50 @@ def create_adapter_client_methods_string_with_type_alisases_and_imports(
     methods_str = ""
     methods = description.get_interface().methods if description.get_interface() else []
     for method in methods:
-        prototype, params_call_backend = create_method_prototype_string(method,
-            description.info["Library"], type_aliases, imports, append_to_params_call='.as_dict()')
+        prototype, params_call = create_method_prototype_string(method,
+            description.info["Library"], type_aliases, imports)
+        async_prototype, params_call_backend = create_method_prototype_string(method,
+            description.info["Library"], type_aliases, imports,
+            parameter_value_transform="_to_capnp_value")
+        public_async_prototype = async_prototype.replace(
+            f"def {method.name}", f"def {method.name}_async", 1)
+        on_executor_prototype = async_prototype.replace(
+            f"def {method.name}", f"def _{method.name}_on_executor__", 1)
+        if not method.results:
+            result_return = "return None"
+        elif len(method.results) == 1:
+            result_return = f"return response.{method.results[0].name}"
+        else:
+            result_fields = ", ".join(
+                f"response.{result.name}" for result in method.results)
+            result_return = f"return ({result_fields})"
         methods_str += f'''
-    async {prototype}:
+    {prototype}:
+        if self._component_call_executor is None:
+            raise RuntimeError(
+                "Client is not connected. Call connect_adapter_client__() first.")
+        return self._component_call_executor.call(
+            self._{method.name}_on_executor__({params_call}))
+
+    async {public_async_prototype}:
+        if self._component_call_executor is None:
+            raise RuntimeError(
+                "Client is not connected. Call connect_adapter_client__() first.")
+        return await asyncio.wrap_future(
+            self._component_call_executor.submit(
+                self._{method.name}_on_executor__({params_call})))
+
+    async {on_executor_prototype}:
         if self._client is None:
             raise RuntimeError("Client is not configured. Please call configure_adapter_client__() first.")
-        # req = self._client.{method.name}()
-        # req.state.position.x = 1.0
-        # req.state.position.y = 2.0
-        # req.state.yaw = 0.5
-        # result = await req
-        # return result
-        return await self._client.{method.name}({params_call_backend})
+        self._logger.debug(
+            f"Calling component: component={{self._adapter_client_info.name!r}}, "
+            f"method='{method.name}'.")
+        response = await self._client.{method.name}({params_call_backend})
+        self._logger.debug(
+            f"Component call completed: component={{self._adapter_client_info.name!r}}, "
+            f"method='{method.name}'.")
+        {result_return}
 '''
 
     return methods_str, type_aliases, imports
@@ -258,20 +299,38 @@ def generate_plugin_adapter_client(
 from typing import List, Dict, Any, Tuple
 import capnp
 import rpp_py.capnp_schema as capnp_schema
-from rpp_py.client_context import ClientContext
+from rpp_py.rpp_runtime_client_context import RppRuntimeClientContext
+from rpp_py.component_call_executor import ComponentCallExecutor
 from rpp_py.adapter_info import AdapterClientParams, AdapterClientInfo
+from rpp_py.logger import RppLogger
 from rpp_plugin_types.{lib_name}.{class_name} import {class_name}
 from rpp_py.plugin_runtime import RuntimeConstants
 import asyncio
 {imports_str}
 
+def _to_capnp_value(value):
+    if hasattr(value, "as_dict"):
+        return value.as_dict()
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    if isinstance(value, (list, tuple)):
+        return [_to_capnp_value(item) for item in value]
+    if isinstance(value, dict):
+        return {{key: _to_capnp_value(item) for key, item in value.items()}}
+    return value
+
 class {class_name}_AdapterClient({class_name}):
     {type_aliases_str}
 
-    def __init__(self):
+    def __init__(self, logger: RppLogger | None = None):
         self._adapter_client_params: AdapterClientParams = None
+        self._logger = logger
         self._client = None
         self._runtime = None
+        self._component_call_executor = None
+        self._owned_component_call_executor = None
+        self._runtime_client_context = None
+        self._owns_runtime_client_context = False
 
     def configure_adapter_client__(self, adapter_client_params: AdapterClientParams):
         self._adapter_client_params = adapter_client_params
@@ -283,15 +342,61 @@ class {class_name}_AdapterClient({class_name}):
         self._adapter_client_info.connection_name = adapter_client_params.connection_name \\
             if adapter_client_params.connection_name else \\
                 f"{{adapter_client_params.plugin_name}}_connection"
+        if self._logger is None:
+            self._logger = RppLogger(self._adapter_client_info.name)
 
-    async def connect_adapter_client__(self, context: ClientContext):
+    def connect_adapter_client__(
+            self, context: RppRuntimeClientContext, executor=None):
         if self._adapter_client_params is None:
             raise RuntimeError("Adapter client params is not configured. Please call configure_adapter_client__() first.")
-        self._runtime = context.get_runtime()
+        owns_runtime_client_context = executor is None
+        owned_executor = None
+        if owns_runtime_client_context:
+            if context.is_started:
+                raise RuntimeError(
+                    "An adapter-owned executor requires an unstarted runtime context.")
+            owned_executor = ComponentCallExecutor()
+            owned_executor.start()
+            executor = owned_executor
+
+        self._configure_adapter_client_connection__(
+            context, executor, owns_runtime_client_context, owned_executor)
+        try:
+            return executor.call(self._connect_adapter_client_on_executor__())
+        except Exception:
+            try:
+                executor.call(self._disconnect_adapter_client_on_executor__())
+            finally:
+                if owned_executor is not None:
+                    owned_executor.stop()
+            raise
+
+    async def _connect_adapter_client_with_executor__(
+            self, context: RppRuntimeClientContext, executor):
+        if self._adapter_client_params is None:
+            raise RuntimeError("Adapter client params is not configured. Please call configure_adapter_client__() first.")
+        self._configure_adapter_client_connection__(
+            context, executor, False, None)
+        return await self._connect_adapter_client_on_executor__()
+
+    def _configure_adapter_client_connection__(
+            self, context: RppRuntimeClientContext, executor,
+            owns_runtime_client_context: bool, owned_executor):
+        self._runtime_client_context = context
+        self._component_call_executor = executor
+        self._owns_runtime_client_context = owns_runtime_client_context
+        self._owned_component_call_executor = owned_executor
+
+    async def _connect_adapter_client_on_executor__(self):
+        if self._owns_runtime_client_context:
+            connected, error = await self._runtime_client_context.start()
+            if not connected:
+                raise RuntimeError("Failed to connect adapter client runtime.") from error
+        self._runtime = self._runtime_client_context.get_runtime()
 
         runtime_class = RuntimeConstants.get_capnp_schema().PluginRuntime
         try:
-            self._runtime_client = context.get_client().cast_as(runtime_class)
+            self._runtime_client = self._runtime_client_context.get_client().cast_as(runtime_class)
             capability = await self._runtime_client.getComponentCapability(
                 self._adapter_client_info.connection_name)
             interface_class = capnp_schema.get_client_class("{plugin_type_name}", "{file_name}")
@@ -299,12 +404,31 @@ class {class_name}_AdapterClient({class_name}):
             return True
         except Exception as e:
             client_class = capnp_schema.get_client_class("{plugin_type_name}", "{file_name}")
-            self._client = context.get_client().cast_as(client_class)
+            self._client = self._runtime_client_context.get_client().cast_as(client_class)
+            return True
 
-    async def disconnect_adapter_client__(self):
+    def disconnect_adapter_client__(self):
+        executor = self._component_call_executor
+        if executor is None:
+            return
+        owned_executor = self._owned_component_call_executor
+        try:
+            executor.call(self._disconnect_adapter_client_on_executor__())
+        finally:
+            if owned_executor is not None:
+                owned_executor.stop()
+
+    async def _disconnect_adapter_client_on_executor__(self):
         self._adapter_client_params = None
         self._client = None
         self._runtime = None
+        self._component_call_executor = None
+        if self._owns_runtime_client_context and \\
+                self._runtime_client_context is not None:
+            await self._runtime_client_context.stop()
+        self._runtime_client_context = None
+        self._owns_runtime_client_context = False
+        self._owned_component_call_executor = None
 
     {methods_str}
 '''
@@ -334,17 +458,20 @@ from typing import List, Dict, Any, Tuple
 import capnp
 import rpp_py.capnp_schema as capnp_schema
 import asyncio
+import inspect
 from rpp_py.capnp_runtime import CapnpRuntime
 from rpp_py.context import ComponentContext
 from rpp_py.adapter_info import AdapterServerParams, AdapterServerInfo
+from rpp_py.logger import RppLogger
 from rpp_plugin_types.{lib_name}.{class_name} import {class_name}
 
 class {class_name}_AdapterServer(capnp_schema.get_server_class("{plugin_type_name}", "{file_name}")):
     {type_aliases_str}
 
-    def __init__(self):
+    def __init__(self, logger: RppLogger | None = None):
         super().__init__()
         self._adapter_server_params: AdapterServerParams = None
+        self._logger = logger
         self._backend : {class_name} = None
         self._asyncio_server = None
         self._rpc_server = None
@@ -364,6 +491,8 @@ class {class_name}_AdapterServer(capnp_schema.get_server_class("{plugin_type_nam
             if adapter_server_params.connection_name else \\
                 f"{{adapter_server_params.plugin_name}}_connection"
         self._backend = adapter_server_params.backend
+        if self._logger is None:
+            self._logger = RppLogger(self._adapter_server_info.name)
 
     def create_capability_adapter_server__(self):
         return capnp_schema.get_server_class("{plugin_type_name}", "{file_name}")

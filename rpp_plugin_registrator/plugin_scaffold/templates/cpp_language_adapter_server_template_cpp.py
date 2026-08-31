@@ -14,6 +14,7 @@ SOURCE_TEMPLATE = """
 #include "rpp_cpp/adapter_bases.hpp"
 #include "rpp_cpp/capnp_server.hpp"
 #include "rpp_cpp/context.hpp"
+#include "rpp_cpp/logger.hpp"
 
 namespace ${lib_name}::hidden{
 
@@ -25,13 +26,16 @@ class ${class_name}_Adapter_Server
 private:
     ${lib_name}::${class_name}* backend_;
     std::shared_ptr<rpp::ServerAdapterParams> params_ = nullptr;
+    std::shared_ptr<rpp::RppLogger> logger_;
     rpp::ServerAdapterInfo info_;
     std::unique_ptr<rpp::runtime::CapnpServer> rpc_server_ = nullptr;
 
 public:
 
-    explicit ${class_name}_Adapter_Server()
-        : backend_(nullptr)
+    explicit ${class_name}_Adapter_Server(
+        std::shared_ptr<rpp::RppLogger> logger = nullptr)
+        : backend_(nullptr),
+          logger_(std::move(logger))
     {
         info_.plugin_type = "${plugin_type_name}";
         info_.created_at = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -39,6 +43,8 @@ public:
     }
 
     capnp::Capability::Client create_capability_adapter_server__() override {
+        RPP_LOG_DEBUG(*logger_, "Creating component capability: component=%s.",
+                      info_.name.c_str());
         kj::Own<::schema::${lib_name}::${class_name}::Server> owned_server(
             static_cast<::schema::${lib_name}::${class_name}::Server*>(this),
             kj::NullDisposer::instance
@@ -52,6 +58,8 @@ public:
         }
         auto server_cap = create_capability_adapter_server__();
         rpc_server_ = std::make_unique<rpp::runtime::CapnpServer>(io, host, port, server_cap);
+        RPP_LOG_DEBUG(*logger_, "Started adapter RPC server: component=%s host=%s port=%d.",
+                      info_.name.c_str(), host.c_str(), port);
     }
 
     bool configure_adapter_server__(std::shared_ptr<rpp::ServerAdapterParams> params) override {
@@ -63,10 +71,17 @@ public:
         info_.plugin_name = params->plugin_name;
         info_.connection_name = params->connection_name;
         backend_ = dynamic_cast<${lib_name}::${class_name}*>(params->backend.get());
+        if (!logger_) {
+            logger_ = std::make_shared<rpp::RppLogger>(info_.name);
+        }
+        RPP_LOG_DEBUG(*logger_, "Configured adapter server: component=%s connection=%s.",
+                      info_.name.c_str(), info_.connection_name.c_str());
         return true;
     }
 
     void close_adapter_server__() override {
+        RPP_LOG_DEBUG(*logger_, "Stopping adapter RPC server: component=%s.",
+                      info_.name.c_str());
         rpc_server_.reset();
     }
 

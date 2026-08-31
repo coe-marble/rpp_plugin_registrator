@@ -1,5 +1,6 @@
 
 import json
+import os
 from pathlib import Path
 import re
 from typing import Dict, Any, List, Optional, Tuple
@@ -27,6 +28,7 @@ from .cpp_helpers import (
     get_plugin_type_shared_library_path,
     get_plugin_type_shared_library_flags,
     get_cpp_shared_libraries_path,
+    get_rpp_cpp_core_shared_library_path,
     get_tmp_dir_for_compilation,
     register_cpp_plugin_source,
     register_cpp_plugin_type_source
@@ -97,6 +99,12 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
             + f"\nError: {str(e)}\n{e.stderr.decode('utf-8')}", compile_cmd, out_file_path
     return None, compile_cmd, out_file_path
 
+
+def _get_common_cpp_linker_flags() -> List[str]:
+    return ["-Wl,-z,defs", "-lcapnp", "-lcapnp-rpc", "-lkj", "-lkj-async"]
+
+
+
 def compile_cpp_plugin_type(source_file:str, plugin_type_info: PluginTypeInfo,
         out_dir: Path, suppress_warnings: bool = True,
         print_to_console: bool = False, verbose: bool = False) -> Tuple[Optional[str], List[str], Path]:
@@ -105,7 +113,11 @@ def compile_cpp_plugin_type(source_file:str, plugin_type_info: PluginTypeInfo,
     class_name = info.get("ClassName")
     plugin_type_library = info.get("Library")
     imports = get_cpp_imports_for_rpp()
-    linked_libs = ["-Wl,-z,defs", "-lcapnp", "-lcapnp-rpc", "-lkj", "-lkj-async"]
+    linked_libs = _get_common_cpp_linker_flags()
+    rpp_cpp_core_path, rpp_cpp_core_lib_name = \
+        get_rpp_cpp_core_shared_library_path()
+
+    linked_libs += [f"-L{rpp_cpp_core_path}", f"-l{rpp_cpp_core_lib_name}"]
 
     use_ros2 = get_setting("USE_ROS2_COMPILATION")
     if use_ros2:
@@ -143,7 +155,7 @@ def compile_cpp_plugin(source_file: PluginInfo,
     imports = get_cpp_imports_for_rpp()
     includes, lib_dirs, libs_to_link = \
         get_cpp_imports_and_libraries_for_library(library_name)
-    linked_libs = ["-lcapnp", "-lcapnp-rpc", "-lkj", "-lkj-async"]
+    linked_libs = _get_common_cpp_linker_flags()
     flags = get_plugin_type_shared_library_flags(plugin_type_name)
     linked_libs += flags
     linked_libs += [f"-L{lib_dir}" for lib_dir in lib_dirs]
@@ -332,9 +344,16 @@ def get_cpp_plugin_info_string_from_debug_symbols(
             + f"Error: {compile_error}")
 
     gdb_cmd = ["gdb", "-batch", "-x", str(gdb_source_file)]
+    gdb_env = os.environ.copy()
+    rpp_cpp_core_path = get_setting("RPP_CPP_CORE_PATH")
+    if rpp_cpp_core_path:
+        existing_library_path = gdb_env.get("LD_LIBRARY_PATH")
+        gdb_env["LD_LIBRARY_PATH"] = os.pathsep.join(
+            filter(None, [rpp_cpp_core_path, existing_library_path]))
     try:
         result = subprocess.run(
-            gdb_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            gdb_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=gdb_env)
         if result.returncode != 0:
             raise RuntimeError(
                 f"GDB analysis failed for plugin class '{class_name}' "

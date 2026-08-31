@@ -140,8 +140,10 @@ def generate_methods_for_foreign_language_adapter_client(methods: list) -> str:
         method_name = method["Name"]
 
         param_setters = []
+        capture_params = ["this"]
         indent = " " * 8
         for param in method["Params"]:
+            capture_params.append(f"&{param['Name']}")
             capnp_field_name = adapt_capnp_field_name(param["Name"])
             param_setters.append("        request.set" \
                 + f"{capnp_field_name}({param['Name']});")
@@ -149,9 +151,9 @@ def generate_methods_for_foreign_language_adapter_client(methods: list) -> str:
         param_setters = "\n".join(param_setters)
         result_getters = []
         if return_type == "void":
-            response_handling = f"{indent}request.send().wait(io_->waitScope);\n"
+            response_handling = f"{indent}request.send().wait(io.waitScope);\n"
         else:
-            response_handling = f"{indent}auto response = request.send().wait(io_->waitScope);\n"
+            response_handling = f"{indent}auto response = request.send().wait(io.waitScope);\n"
         for result in method["Results"]:
             type_name = parse_type_name_from_type_info(result["Type"])
             if result["Type"]["Kind"] == "struct":
@@ -167,18 +169,29 @@ def generate_methods_for_foreign_language_adapter_client(methods: list) -> str:
                 result_getters.append(f"{result['Name']}")
             else:
                 result_getters.append(f"response.get{adapt_capnp_field_name(result['Name'])}()")
+        response_handling += (
+            f'{indent}RPP_LOG_DEBUG(*logger_, '
+            f'"Component call completed: component=%s method={method_name}.", '
+            'info_.name.c_str());\n'
+        )
         if len(method["Results"]) == 1:
             response_handling += f"        return {result_getters[0]};"
         elif len(method["Results"]) > 1:
             response_handling += f"        return std::make_tuple({', '.join(result_getters)});"
+        direct_response_handling = response_handling.replace(
+            "io.waitScope", "io_->waitScope")
+        if return_type == "void":
+            direct_response_handling += f"{indent}return;"
 
         method_strings.append(
             _render_template(
                 client_template.METHOD_TEMPLATE,
                 prototype=prototype,
                 method_name=method_name,
+                capture_params=", ".join(capture_params),
                 param_setters=param_setters,
                 response_handling=response_handling,
+                direct_response_handling=direct_response_handling,
             )
         )
     return "\n".join(method_strings)
@@ -201,9 +214,17 @@ def generate_methods_for_foreign_language_adapter_server(lib_name: str, class_na
             body_lines.append(f"{indent}auto {param['Name']} = context.getParams().get{adapt_capnp_field_name(param['Name'])}();\n")
         params_expr = ", ".join([f"{param['Name']}" for param in method["Params"]])
 
+        body_lines.append(
+            f'{indent}RPP_LOG_DEBUG(*logger_, '
+            f'"Received request: component=%s method={method_name}.", '
+            'info_.name.c_str());\n')
         body_lines.append(f"{indent}// Call the backend method and set the results in the context\n")
         if return_type == "void":
             body_lines.append(f"{indent}backend_->{method_name}({params_expr});")
+            body_lines.append(
+                f'{indent}RPP_LOG_DEBUG(*logger_, '
+                f'"Backend completed: component=%s method={method_name}.", '
+                'info_.name.c_str());\n')
             body_lines.append(f"{indent}return ::kj::READY_NOW;")
 
         else:
@@ -218,6 +239,10 @@ def generate_methods_for_foreign_language_adapter_server(lib_name: str, class_na
                 for index, result in enumerate(method["Results"]):
                     result_name = adapt_capnp_field_name(result["Name"])
                     body_lines.append(f"{indent}context.getResults().set{result_name}(std::get<{index}>(result));\n")
+            body_lines.append(
+                f'{indent}RPP_LOG_DEBUG(*logger_, '
+                f'"Backend completed: component=%s method={method_name}.", '
+                'info_.name.c_str());\n')
             body_lines.append(f"{indent}return ::kj::READY_NOW;\n")
         if params_expr or len(method["Results"]) > 0:
             context_if_arguments = "context"

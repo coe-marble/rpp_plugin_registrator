@@ -158,9 +158,9 @@ def scaffold_and_generate_from_description(description: PluginTypeInfo, only_stu
         generate_plugin_type_interface(description, SCAFFOLD_LANGUAGES)
 
 def ensure_rpp_layout(
-    common_plugins_dir: Optional[Path] = None,
-    override_initialization: bool = False,
-    init_anot_only: bool = False,
+        common_plugins_dir: Optional[Path] = None,
+        override_initialization: bool = False,
+        init_anot_only: bool = False,
 ) -> List[Any]:
     paths = get_rpp_paths()
     paths["home"].mkdir(parents=True, exist_ok=True)
@@ -187,7 +187,9 @@ def ensure_rpp_layout(
     print(f"Initializing RPP home at: {paths['home']}. This may take a while...")
 
     initialized_plugins = _initialize_common_plugins(paths,
-        common_plugins_dir, init_anot_only=init_anot_only, override=override_initialization)
+        common_plugins_dir,
+        init_anot_only=init_anot_only,
+        override=override_initialization)
 
     plugins_list_str = [plugin["PluginTypeName"] for plugin in initialized_plugins]
     init_payload = build_initialization_payload(rp.SCHEMA_VERSION, plugins_list_str)

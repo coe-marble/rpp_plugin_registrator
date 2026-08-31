@@ -14,6 +14,11 @@ import rpp_plugin_registrator.plugin_type_registrator as registry_api
 from rpp_plugin_registrator import registry_config as rp
 
 
+def write_config(home: Path, orig_cfg: dict):
+    new_config_path = home / "config.json"
+    with open(new_config_path, "w", encoding="utf-8") as f:
+        json.dump(orig_cfg, f, indent=4)
+
 class PluginTypeRegistratorTests(unittest.TestCase):
     TEST_LIBRARY = "testlib"
 
@@ -492,10 +497,12 @@ class ScaffoldTests(unittest.TestCase):
 
     def setUp(self):
         self._original_rpp_home = rp.RPP_HOME
+        orig_cfg = rp.get_config()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.temp_root = Path(self.temp_dir.name)
         rp.RPP_HOME = self.temp_root / ".rpp"
         rp.RPP_HOME.mkdir(parents=True, exist_ok=True)
+        write_config(rp.RPP_HOME, orig_cfg)
 
         self.libs_path = self.temp_root / "libraries"
         self.libs_path.mkdir(parents=True, exist_ok=True)
@@ -514,6 +521,7 @@ class ScaffoldTests(unittest.TestCase):
 
     def tearDown(self):
         rp.RPP_HOME = self._original_rpp_home
+        rp.reset_module()
         self.registrator_module.reset_module()
         self.temp_dir.cleanup()
         subprocess.run = self.subprocess_run

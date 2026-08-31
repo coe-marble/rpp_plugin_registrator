@@ -7,6 +7,7 @@ import gdb, re, json
 # 1. Start the program and set a breakpoint at main
 gdb.execute("tbreak main")
 gdb.execute("run")
+gdb.execute("next")
 
 so_path = "{so_path}"
 
@@ -263,7 +264,8 @@ def parse_plugin_source(symbol):
 
 
 try:
-    gdb.execute(f'set $handle = (void*)__libc_dlopen_mode("{so_path}", 1)')
+    if int(gdb.parse_and_eval("handle")) == 0:
+        raise RuntimeError("The dummy executable could not load the plugin shared library")
     gdb.execute("sharedlibrary")
     # 3. Configuration of better output formatting (GDB now has vectors and maps in memory!)
 

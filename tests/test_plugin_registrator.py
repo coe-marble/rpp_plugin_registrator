@@ -19,13 +19,21 @@ RPP_TESTING_PATH = Path(__file__).parent.parent.parent.resolve() \
     / "rpp_testing" / "rpp_testing"
 EXAMPLES_DATA_PATH = RPP_TESTING_PATH / "data"
 
+def write_config(home: Path, orig_cfg: dict):
+    new_config_path = home / "config.json"
+    home.mkdir(parents=True, exist_ok=True)
+    with open(new_config_path, "w", encoding="utf-8") as f:
+        json.dump(orig_cfg, f, indent=4)
+
 class LibraryManagerTests(unittest.TestCase):
     def setUp(self):
         self._home_dir = tempfile.TemporaryDirectory()
         self.home = Path(self._home_dir.name)
         self.home.mkdir(parents=True, exist_ok=True)
         self._original_rpp_home = rp.RPP_HOME
+        cfg = rp.get_config()
         rp.RPP_HOME = self.home
+        write_config(self.home / ".rpp", cfg)
 
         # dissable unnecessary scaffolding
         import rpp_plugin_registrator.plugin_type_registrator
@@ -34,6 +42,7 @@ class LibraryManagerTests(unittest.TestCase):
     def tearDown(self):
         self._home_dir.cleanup()
         rp.RPP_HOME = self._original_rpp_home
+        rp.reset_module()
         import rpp_plugin_registrator.plugin_type_registrator
         rpp_plugin_registrator.plugin_type_registrator.reset_module()
         # clean up the environment variable after the test
@@ -245,13 +254,17 @@ class PythonPluginRegistratorTests(unittest.TestCase):
         self.home = Path(self._home_dir.name)
         self.home.mkdir(parents=True, exist_ok=True)
         self._original_rpp_home = rp.RPP_HOME
+        cfg = rp.get_config()
+        write_config(self.home / ".rpp", cfg)
         os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
         rp.RPP_HOME = self.home
         self.manager = LibraryManager(rpp_home=self.home / ".rpp")
 
+
     def tearDown(self):
         self._home_dir.cleanup()
         rp.RPP_HOME = self._original_rpp_home
+        rp.reset_module()
         os.environ.pop("RPP_WHITELIST_PLUGIN_TYPES", None)  # Clean up the environment variable after the test
 
 
@@ -470,227 +483,228 @@ class ComponentPlugin(MotionController2D):
 
 class CppPluginRegistratorTests(unittest.TestCase):
 
+    def setUp(self):
+        self._home_dir = tempfile.TemporaryDirectory()
+        self._original_rpp_home = rp.RPP_HOME
+        cfg = rp.get_config()
+        write_config(Path(self._home_dir.name) / ".rpp", cfg)
 
     def tearDown(self):
         os.environ.pop("RPP_WHITELIST_PLUGIN_TYPES", None)  # Clean up the environment variable after the test
         rpp_plugin_registrator.registry_config.reset_module()
+        rp.RPP_HOME = self._original_rpp_home
+        rp.reset_module()
 
     def test_register_cpp_plugin_with_components_then_unregister(self):
-        with tempfile.TemporaryDirectory() as td:
 
-            temp_root = Path(td)
-            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
-            manager = LibraryManager(rpp_home=temp_root / ".rpp")
-            handle = manager.get_or_create_plugin_library("TestLib")
+        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
+        manager = LibraryManager(rpp_home=Path(self._home_dir.name) / ".rpp")
+        handle = manager.get_or_create_plugin_library("TestLib")
 
-            library_root = Path(handle.path)
-            plugin_dir = library_root / "plugins"
-            plugin_dir.mkdir(parents=True, exist_ok=True)
+        library_root = Path(handle.path)
+        plugin_dir = library_root / "plugins"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
 
-            plugin_path = plugin_dir / "ComponentPluginSimpleCpp.cpp"
-            shutil.copyfile(
-                EXAMPLES_DATA_PATH / "example_plugins" / "example_plugin_simple_cpp.cpp",
-                plugin_path,
-            )
+        plugin_path = plugin_dir / "ComponentPluginSimpleCpp.cpp"
+        shutil.copyfile(
+            EXAMPLES_DATA_PATH / "example_plugins" / "example_plugin_simple_cpp.cpp",
+            plugin_path,
+        )
 
-            manager.register_plugin_from_source(plugin_path, "TestLib")
+        manager.register_plugin_from_source(plugin_path, "TestLib")
 
-            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
-            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_path = rp.get_app_library_manifest_path_json("TestLib")
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-            self.assertIn("Plugins", manifest_payload)
-            self.assertIn("TestLib::ComponentPluginSimpleCpp", manifest_payload["Plugins"])
-            abs_path = manager.get_plugin_path_absolute(
-                manifest_payload["Plugins"]["TestLib::ComponentPluginSimpleCpp"]["SourceFile"],
-                "TestLib",
-            )
-            self.assertEqual(
-                str(abs_path),
-                str(plugin_path.resolve()),
-            )
+        self.assertIn("Plugins", manifest_payload)
+        self.assertIn("TestLib::ComponentPluginSimpleCpp", manifest_payload["Plugins"])
+        abs_path = manager.get_plugin_path_absolute(
+            manifest_payload["Plugins"]["TestLib::ComponentPluginSimpleCpp"]["SourceFile"],
+            "TestLib",
+        )
+        self.assertEqual(
+            str(abs_path),
+            str(plugin_path.resolve()),
+        )
 
 
-            so_path = rp.get_app_registry_path() / "cpp" / "shared" / \
-                "TestLib" / "plugins" / "ComponentPluginSimpleCpp.so"
-            plugin_json_path = rp.get_app_registry_plugin_json_path(
-                "TestLib::ComponentPluginSimpleCpp")
-            self.assertTrue(so_path.exists(),
-                f"Expected shared library '{so_path}' does not exist.")
-            self.assertTrue(plugin_json_path.exists(),
-                f"Expected plugin source file '{plugin_json_path}' does not exist.")
+        so_path = rp.get_app_registry_path() / "cpp" / "shared" / \
+            "TestLib" / "plugins" / "ComponentPluginSimpleCpp.so"
+        plugin_json_path = rp.get_app_registry_plugin_json_path(
+            "TestLib::ComponentPluginSimpleCpp")
+        self.assertTrue(so_path.exists(),
+            f"Expected shared library '{so_path}' does not exist.")
+        self.assertTrue(plugin_json_path.exists(),
+            f"Expected plugin source file '{plugin_json_path}' does not exist.")
 
 
-            manager.unregister_plugin("TestLib::ComponentPluginSimpleCpp")
-            self.assertNotIn("TestLib::ComponentPluginSimpleCpp",
-                manager.get_available_plugins().get("TestLib", {}))
-            self.assertFalse(so_path.exists(),
-                f"Shared library '{so_path}' should have been removed after unregistering the plugin.")
-            self.assertFalse(plugin_json_path.exists(),
-                f"Plugin source file '{abs_path}' should still exist after unregistering the plugin.")
+
+
+        manager.unregister_plugin("TestLib::ComponentPluginSimpleCpp")
+        self.assertNotIn("TestLib::ComponentPluginSimpleCpp",
+            manager.get_available_plugins().get("TestLib", {}))
+        self.assertFalse(so_path.exists(),
+            f"Shared library '{so_path}' should have been removed after unregistering the plugin.")
+        self.assertFalse(plugin_json_path.exists(),
+            f"Plugin source file '{abs_path}' should still exist after unregistering the plugin.")
 
 
     def test_register_cpp_plugin_with_using_namespace_and_type_aliasing(self):
-        with tempfile.TemporaryDirectory() as td:
-            temp_root = Path(td)
-            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
-            manager = LibraryManager(rpp_home=temp_root / ".rpp")
-            handle = manager.get_or_create_plugin_library("TestLib")
+        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
 
-            library_root = Path(handle.path)
-            plugin_dir = library_root / "plugins"
-            plugin_dir.mkdir(parents=True, exist_ok=True)
+        manager = LibraryManager(rpp_home=Path(self._home_dir.name) / ".rpp")
+        handle = manager.get_or_create_plugin_library("TestLib")
 
-            def load_and_test(file_name, class_name):
-                plugin_path = plugin_dir / f"{class_name}.cpp"
-                shutil.copyfile(
-                    EXAMPLES_DATA_PATH / "complex_plugins" / file_name,
-                    plugin_path,
-                )
+        library_root = Path(handle.path)
+        plugin_dir = library_root / "plugins"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
 
-                manager.register_plugin_from_source(plugin_path, "TestLib")
+        def load_and_test(file_name, class_name):
+            plugin_path = plugin_dir / f"{class_name}.cpp"
+            shutil.copyfile(
+                EXAMPLES_DATA_PATH / "complex_plugins" / file_name,
+                plugin_path,
+            )
 
-                manifest_path = rp.get_app_library_manifest_path_json("TestLib")
-                manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manager.register_plugin_from_source(plugin_path, "TestLib")
 
-                self.assertIn("Plugins", manifest_payload)
-                self.assertIn(f"TestLib::{class_name}", manifest_payload["Plugins"])
-                abs_path = manager.get_plugin_path_absolute(
-                    manifest_payload["Plugins"][f"TestLib::{class_name}"]["SourceFile"],
-                    "TestLib",
-                )
-                self.assertEqual(
-                    str(abs_path),
-                    str(plugin_path.resolve()),
-                )
+            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            self.assertIn("Plugins", manifest_payload)
+            self.assertIn(f"TestLib::{class_name}", manifest_payload["Plugins"])
+            abs_path = manager.get_plugin_path_absolute(
+                manifest_payload["Plugins"][f"TestLib::{class_name}"]["SourceFile"],
+                "TestLib",
+            )
+            self.assertEqual(
+                str(abs_path),
+                str(plugin_path.resolve()),
+            )
 
 
-            load_and_test("example_plugin_with_using_namespace.cpp", "ComponentPluginWithUsingNamespace")
-            load_and_test("example_plugin_with_type_alias_outside_class.cpp", "ComponentPluginWithTypeAliasOutsideClass")
-            load_and_test("example_plugin_with_type_alias_in_class.cpp", "ComponentPluginWithTypeAliasInClass")
+        load_and_test("example_plugin_with_using_namespace.cpp", "ComponentPluginWithUsingNamespace")
+        load_and_test("example_plugin_with_type_alias_outside_class.cpp", "ComponentPluginWithTypeAliasOutsideClass")
+        load_and_test("example_plugin_with_type_alias_in_class.cpp", "ComponentPluginWithTypeAliasInClass")
 
     def test_register_cpp_plugin_with_library_dependencies(self):
-        with tempfile.TemporaryDirectory() as td:
-            temp_root = Path(td)
-            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
-            manager = LibraryManager(rpp_home=temp_root / ".rpp")
-            rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
-            manager.get_or_create_plugin_library("rpp_testing")
-            handle = manager.get_or_create_plugin_library("TestLib")
+        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
+        rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
+        manager = LibraryManager(rpp_home=Path(self._home_dir.name) / ".rpp")
+        handle = manager.get_or_create_plugin_library("rpp_testing")
+        handle = manager.get_or_create_plugin_library("TestLib")
 
-            library_root = Path(handle.path)
-            plugin_dir = library_root / "plugins"
-            plugin_dir.mkdir(parents=True, exist_ok=True)
+        library_root = Path(handle.path)
+        plugin_dir = library_root / "plugins"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
 
 
-            package_source = {
-                "Library": "TestLib",
-                "Version": "0.1.0",
-                "Dependencies": [
-                    "rpp_testing>=0.0.1",
-                ],
-                "RosDependencies": [
-                    "rclcpp>=2.0.0",
-                    "zlib>=1.2.11"
-                ]
-            }
+        package_source = {
+            "Library": "TestLib",
+            "Version": "0.1.0",
+            "Dependencies": [
+                "rpp_testing>=0.0.1",
+            ],
+            "RosDependencies": [
+                "rclcpp>=2.0.0",
+                "zlib>=1.2.11"
+            ]
+        }
 
-            package_path = library_root / "package.json"
-            package_path.write_text(json.dumps(package_source, indent=2) + "\n", encoding="utf-8")
+        package_path = library_root / "package.json"
+        package_path.write_text(json.dumps(package_source, indent=2) + "\n", encoding="utf-8")
 
 
-            plugin_path = plugin_dir / "ComponentPluginWithDependencies.cpp"
-            shutil.copyfile(
-                EXAMPLES_DATA_PATH / "complex_plugins" / "example_plugin_with_dependencies.cpp",
-                plugin_path,
-            )
+        plugin_path = plugin_dir / "ComponentPluginWithDependencies.cpp"
+        shutil.copyfile(
+            EXAMPLES_DATA_PATH / "complex_plugins" / "example_plugin_with_dependencies.cpp",
+            plugin_path,
+        )
 
-            manager.register_plugin_from_source(plugin_path, "TestLib")
+        manager.register_plugin_from_source(plugin_path, "TestLib")
 
-            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
-            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_path = rp.get_app_library_manifest_path_json("TestLib")
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-            self.assertIn("Plugins", manifest_payload)
-            self.assertIn("TestLib::ComponentPluginWithDependencies", manifest_payload["Plugins"])
-            abs_path = manager.get_plugin_path_absolute(
-                manifest_payload["Plugins"]["TestLib::ComponentPluginWithDependencies"]["SourceFile"],
-                "TestLib",
-            )
-            self.assertEqual(
-                str(abs_path),
-                str(plugin_path.resolve()),
-            )
+        self.assertIn("Plugins", manifest_payload)
+        self.assertIn("TestLib::ComponentPluginWithDependencies", manifest_payload["Plugins"])
+        abs_path = manager.get_plugin_path_absolute(
+            manifest_payload["Plugins"]["TestLib::ComponentPluginWithDependencies"]["SourceFile"],
+            "TestLib",
+        )
+        self.assertEqual(
+            str(abs_path),
+            str(plugin_path.resolve()),
+        )
 
-            so_path = rp.get_app_registry_path() / "cpp" / "shared" / "TestLib" / "plugins" / "ComponentPluginWithDependencies.so"
-            self.assertTrue(so_path.exists(), f"Expected shared library '{so_path}' does not exist.")
+        so_path = rp.get_app_registry_path() / "cpp" / "shared" / "TestLib" / "plugins" / "ComponentPluginWithDependencies.so"
+        self.assertTrue(so_path.exists(), f"Expected shared library '{so_path}' does not exist.")
+
     def test_register_cpp_plugin_with_all_interface_types(self):
-        with tempfile.TemporaryDirectory() as td:
-            temp_root = Path(td)
-            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::test"
-            manager = LibraryManager(rpp_home=temp_root / ".rpp")
-            rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
-            manager.get_or_create_plugin_library("rpp_testing")
-            handle = manager.get_or_create_plugin_library("TestLib")
+        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::test"
+        rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
+        manager = LibraryManager(rpp_home=Path(self._home_dir.name) / ".rpp")
+        handle = manager.get_or_create_plugin_library("rpp_testing")
+        handle = manager.get_or_create_plugin_library("TestLib")
 
-            library_root = Path(handle.path)
-            plugin_dir = library_root / "plugins"
-            plugin_dir.mkdir(parents=True, exist_ok=True)
+        library_root = Path(handle.path)
+        plugin_dir = library_root / "plugins"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
 
-            plugin_path = plugin_dir / "TestInterfaceAll.cpp"
-            shutil.copyfile(
-                EXAMPLES_DATA_PATH / "example_plugins" / "example_all_interface_types_cpp.cpp",
-                plugin_path,
-            )
+        plugin_path = plugin_dir / "TestInterfaceAll.cpp"
+        shutil.copyfile(
+            EXAMPLES_DATA_PATH / "example_plugins" / "example_all_interface_types_cpp.cpp",
+            plugin_path,
+        )
 
-            manager.register_plugin_from_source(plugin_path, "TestLib")
+        manager.register_plugin_from_source(plugin_path, "TestLib")
 
-            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
-            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_path = rp.get_app_library_manifest_path_json("TestLib")
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-            self.assertIn("Plugins", manifest_payload)
-            self.assertIn("TestLib::AllInterfaceTypesCpp", manifest_payload["Plugins"])
-            abs_path = manager.get_plugin_path_absolute(
-                manifest_payload["Plugins"]["TestLib::AllInterfaceTypesCpp"]["SourceFile"],
-                "TestLib",
-            )
-            self.assertEqual(
-                str(abs_path),
-                str(plugin_path.resolve()),
-            )
+        self.assertIn("Plugins", manifest_payload)
+        self.assertIn("TestLib::AllInterfaceTypesCpp", manifest_payload["Plugins"])
+        abs_path = manager.get_plugin_path_absolute(
+            manifest_payload["Plugins"]["TestLib::AllInterfaceTypesCpp"]["SourceFile"],
+            "TestLib",
+        )
+        self.assertEqual(
+            str(abs_path),
+            str(plugin_path.resolve()),
+        )
 
     def test_register_cpp_plugin_with_data_fields(self):
-        with tempfile.TemporaryDirectory() as td:
-            temp_root = Path(td)
-            os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::DisturbanceGenerator2D"
-            manager = LibraryManager(rpp_home=temp_root / ".rpp")
-            rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
-            manager.get_or_create_plugin_library("rpp_testing")
-            handle = manager.get_or_create_plugin_library("TestLib")
+        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::DisturbanceGenerator2D"
+        rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
+        manager = LibraryManager(rpp_home=Path(self._home_dir.name) / ".rpp")
+        handle = manager.get_or_create_plugin_library("rpp_testing")
+        handle = manager.get_or_create_plugin_library("TestLib")
 
-            library_root = Path(handle.path)
-            plugin_dir = library_root / "plugins"
-            plugin_dir.mkdir(parents=True, exist_ok=True)
+        library_root = Path(handle.path)
+        plugin_dir = library_root / "plugins"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
 
-            plugin_path = plugin_dir / "ComponentPluginWithDataFields.cpp"
-            shutil.copyfile(
-                EXAMPLES_DATA_PATH / "example_plugins" / "example_data_interface_cpp.cpp",
-                plugin_path,
-            )
+        plugin_path = plugin_dir / "ComponentPluginWithDataFields.cpp"
+        shutil.copyfile(
+            EXAMPLES_DATA_PATH / "example_plugins" / "example_data_interface_cpp.cpp",
+            plugin_path,
+        )
 
-            manager.register_plugin_from_source(plugin_path, "TestLib")
+        manager.register_plugin_from_source(plugin_path, "TestLib")
 
-            manifest_path = rp.get_app_library_manifest_path_json("TestLib")
-            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_path = rp.get_app_library_manifest_path_json("TestLib")
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-            self.assertIn("Plugins", manifest_payload)
-            self.assertIn("TestLib::DataInterfaceCpp", manifest_payload["Plugins"])
-            abs_path = manager.get_plugin_path_absolute(
-                manifest_payload["Plugins"]["TestLib::DataInterfaceCpp"]["SourceFile"],
-                "TestLib",
-            )
-            self.assertEqual(
-                str(abs_path),
-                str(plugin_path.resolve()),
-            )
+        self.assertIn("Plugins", manifest_payload)
+        self.assertIn("TestLib::DataInterfaceCpp", manifest_payload["Plugins"])
+        abs_path = manager.get_plugin_path_absolute(
+            manifest_payload["Plugins"]["TestLib::DataInterfaceCpp"]["SourceFile"],
+            "TestLib",
+        )
+        self.assertEqual(
+            str(abs_path),
+            str(plugin_path.resolve()),
+        )
 
 if __name__ == "__main__":
     unittest.main()

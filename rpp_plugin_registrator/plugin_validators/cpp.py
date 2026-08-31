@@ -103,4 +103,3 @@ def validate_cpp_plugin(desc: PluginInfo, plugin_types: Dict[str, PluginTypeInfo
             class_name=class_name,
         )
     )
-

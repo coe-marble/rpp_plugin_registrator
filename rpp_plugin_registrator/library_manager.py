@@ -50,14 +50,16 @@ class LibraryManager:
     rpp_home = None
     file_text_encoding = 'utf-8'
 
-    def __init__(self, rpp_home: Path | None = None, source_libraries : bool = True, init_anot_only: bool = False):
+    def __init__(self, rpp_home: Path | None = None, source_libraries : bool = True,
+            init_anot_only: bool = False, skip_layout_check: bool = False):
         self.rpp_home = Path(rpp_home).expanduser().resolve() if rpp_home is not None else rp.RPP_HOME
         rp.RPP_HOME = self.rpp_home
 
         rp.load_and_set_config(self)
-        self._ensure_layout(init_anot_only=init_anot_only)
-        if source_libraries:
-            self._source_registered_libraries()
+        if not skip_layout_check:
+            self._ensure_layout(init_anot_only=init_anot_only)
+            if source_libraries:
+                self._source_registered_libraries()
 
     @property
     def is_long_library_management(self):
@@ -103,7 +105,7 @@ class LibraryManager:
             python_autogen_path.mkdir(parents=True, exist_ok=True)
         abs_path = os.path.abspath(str(python_autogen_path))
         if abs_path not in sys.path:
-            sys.path.append(abs_path)
+            sys.path.insert(0, abs_path)
 
 
     # Plugin methods

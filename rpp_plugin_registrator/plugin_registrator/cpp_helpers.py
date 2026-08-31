@@ -93,6 +93,21 @@ def get_cpp_shared_libraries_path(
     return dest_path
 
 
+def get_rpp_cpp_core_shared_library_path() -> Tuple[str, str]:
+    """Get the path to the shared libraries for the rpp_cpp_core library."""
+    rpp_cpp_core_path = get_setting("RPP_CPP_CORE_PATH")
+    if rpp_cpp_core_path is not None:
+        return rpp_cpp_core_path, "rpp_cpp_core"
+    elif get_setting("USE_ROS2_COMPILATION"):
+        from ament_index_python.packages import (
+            get_package_share_directory,
+        )
+        rclpy_info = get_package_share_directory("rpp_cpp")
+        rpp_cpp_core_path = Path(rclpy_info).parent.parent
+        return str(rpp_cpp_core_path), "rpp_cpp_core"
+    else:
+        raise ValueError("RPP_CPP_CORE_PATH environment variable is not set and USE_ROS2_COMPILATION is not set.")
+
 
 def get_cpp_imports_and_libraries_for_library(
         library_name: str) -> Tuple[List[str], List[str], List[str]]:
@@ -212,9 +227,12 @@ def get_cpp_imports_and_libraries_for_library(
                 raise ValueError(f"ROS dependency '{dep_name}'"
                     + f" version does not satisfy the requirement '{dep_operator}{dep_version}'.")
             dependency_infos.append(info)
+
+    rpp_cpp_core_path, rpp_cpp_liked_name = \
+        get_rpp_cpp_core_shared_library_path()
     merged_includes = []
-    merged_lib_dirs = []
-    merged_libs_to_link = []
+    merged_lib_dirs = [rpp_cpp_core_path]
+    merged_libs_to_link = [rpp_cpp_liked_name]
     for info in dependency_infos:
         for inc in info.get("IncludeDirs", []):
             if inc not in merged_includes:
