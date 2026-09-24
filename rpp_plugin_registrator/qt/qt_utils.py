@@ -1,7 +1,7 @@
 import sys, os, subprocess
 from pathlib import Path
 
-DEFAULT_EDITOR = "cursor"
+DEFAULT_EDITOR = "code"
 
 def clear_form_layout(form_layout):
     while form_layout.count():

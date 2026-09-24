@@ -103,7 +103,7 @@ def get_rpp_cpp_core_shared_library_path() -> Tuple[str, str]:
             get_package_share_directory,
         )
         rclpy_info = get_package_share_directory("rpp_cpp")
-        rpp_cpp_core_path = Path(rclpy_info).parent.parent
+        rpp_cpp_core_path = Path(rclpy_info).parent.parent / "lib"
         return str(rpp_cpp_core_path), "rpp_cpp_core"
     else:
         raise ValueError("RPP_CPP_CORE_PATH environment variable is not set and USE_ROS2_COMPILATION is not set.")
@@ -308,7 +308,8 @@ def try_get_ros_dependency_info(dep_name: str, lm) -> Optional[Dict[str, Any]]:
 
 
 def try_get_system_dependency_info(dep_name: str, lm) -> Optional[Dict[str, Any]]:
-    pkg_search_name = dep_name.replace('1g-dev', '').replace('-dev', '')
+    pkg_search_name = dep_name.replace('1g-dev', '') \
+        .replace('-dev', '').replace('eigen', 'eigen3')
 
     include_dirs = []
     lib_dirs = []

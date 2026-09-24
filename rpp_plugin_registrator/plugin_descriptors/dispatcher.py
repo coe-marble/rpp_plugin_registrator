@@ -27,6 +27,6 @@ def parse_plugin_type_file(source_file: Union[str, Path],
     if isinstance(source_file, str):
         source_file = Path(source_file)
     language = infer_language_from_path(source_file)
-    if language is "capnp":
+    if language == "capnp":
         return parse_capnp_plugin(source_file, plugin_id_override, relative_to_source=relative_to_source)
     raise ValueError(f"Unsupported source language for file '{source_file}'.")

@@ -77,11 +77,11 @@ def get_setting(setting_name: str) -> Optional[str]:
 
 def set_to_config(setting_name: str, setting_value: str) -> None:
 
-    import rpp_plugin_registrator.registry_config as rp
     if setting_name not in __INIT_SET["settings"]:
         raise ValueError(f"Setting '{setting_name}' is not a valid setting."
             + f" Available settings: {__INIT_SET['settings'].keys()}")
     config_path = get_app_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     if config_path.exists():
         with open(config_path, "r", encoding="utf-8") as f:
             config_data = json.load(f)
