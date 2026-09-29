@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 SCHEMA_VERSION = 1
 RPP_HOME = Path.home() / ".rpp"
@@ -69,14 +69,27 @@ def get_library_manager() -> 'LibraryManager':
     return __INIT_SET["library_manager"]
 
 
-def get_setting(setting_name: str) -> Optional[str]:
+def _parse_config_value(setting_value: Any) -> Any:
+    if not isinstance(setting_value, str):
+        return setting_value
+    try:
+        return json.loads(setting_value)
+    except json.JSONDecodeError:
+        return setting_value
+
+
+def get_setting(setting_name: str) -> Any:
     if setting_name not in __INIT_SET["settings"]:
         raise ValueError(f"Setting '{setting_name}' is not a valid setting."
             + f" Available settings: {__INIT_SET['settings'].keys()}")
+
+    config_data = get_config()
+    if setting_name in config_data:
+        __INIT_SET["settings"][setting_name] = config_data[setting_name]
     return __INIT_SET["settings"][setting_name]
 
-def set_to_config(setting_name: str, setting_value: str) -> None:
 
+def set_to_config(setting_name: str, setting_value: Any) -> bool:
     if setting_name not in __INIT_SET["settings"]:
         raise ValueError(f"Setting '{setting_name}' is not a valid setting."
             + f" Available settings: {__INIT_SET['settings'].keys()}")
@@ -88,13 +101,9 @@ def set_to_config(setting_name: str, setting_value: str) -> None:
     else:
         config_data = {}
 
-    if setting_value in ["true", "True"]:
-        setting_value = True
-    elif setting_value in ["false", "False"]:
-        setting_value = False
-
-    config_data[setting_name] = setting_value
-    __INIT_SET["settings"][setting_name] = setting_value
+    parsed_value = _parse_config_value(setting_value)
+    config_data[setting_name] = parsed_value
+    __INIT_SET["settings"][setting_name] = parsed_value
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config_data, f)
     return True
@@ -108,7 +117,7 @@ def get_config():
         config_data = {}
     return config_data
 
-def load_and_set_config(library_manager) -> Dict[str, str]:
+def load_and_set_config(library_manager) -> Dict[str, Any]:
 
     if __INIT_SET.get("config_loaded", False):
         return

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Union
+from typing import Any, Union
 import json5
 import os, sys
 import shutil
@@ -409,11 +409,31 @@ class LibraryManager:
             raise ValueError(f"Plugin type '{plugin_type_name}' not found in library '{lib_name}'")
         return load_json5(Path(json_path))
 
-    def register_plugin_type_from_source(self, plugin_type_file: Union[str, Path], lib_name: str, override: bool = False):
-        return ptyp_reg_api.register_plugin_type_from_source(plugin_type_file, lib_name, override=override)
+    def register_plugin_type_from_source(
+            self, plugin_type_file: Union[str, Path], lib_name: str,
+            override: bool = False) -> list[dict[str, Any]]:
+        registered_types = ptyp_reg_api.register_plugin_type_from_source(
+            plugin_type_file, lib_name, override=override
+        )
+        self.add_to_manifest(lib_name, plugin_type_or_list=registered_types)
+        return registered_types
 
-    def unregister_plugin_type(self, plugin_type_name: str):
-        return ptyp_reg_api.unregister_plugin_type(plugin_type_name)
+    def unregister_plugin_type(self, plugin_type_name: str) -> bool:
+        plugin_type_name, library_name = self._resolve_plugin_name_and_library(
+            plugin_type_name
+        )
+        removed = ptyp_reg_api.unregister_plugin_type(plugin_type_name)
+        if not removed:
+            return False
+
+        library_path = self.get_library_path(library_name)
+        if self.is_valid_plugin_library(library_path):
+            manifest_data = self.load_lib_manifest(library_path)
+            manifest_data.get(LIBRARY_PLUGIN_TYPES_KEY, {}).pop(
+                plugin_type_name, None
+            )
+            self.save_lib_manifest(library_path, manifest_data)
+        return True
 
     # Library Management Methods
     def refresh_plugin_library(self, lib_name, throw=True):

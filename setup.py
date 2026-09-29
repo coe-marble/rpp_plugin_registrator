@@ -12,6 +12,7 @@ setup(
         "json5",
         "tree-sitter",
         "tree-sitter-cpp",
-        "pycapnp"
+        "pycapnp", 
+        "xmltodict"
     ],
 )

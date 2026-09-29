@@ -107,6 +107,42 @@ interface ControlType $Anot.plugin("ControlType"){
             self.assertEqual(manifest_payload["PluginTypes"]["TestLib::ControlType"]["Library"], "TestLib")
 
 
+    def test_plugin_type_lifecycle_updates_library_manifest(self):
+        with tempfile.TemporaryDirectory() as td:
+            manager = LibraryManager(rpp_home=Path(td) / ".rpp")
+            handle = manager.get_or_create_plugin_library("TestLib")
+            source_path = Path(handle.path) / "plugin_types" / "ControlType.capnp"
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.write_text(
+                """@0xabcdefabcdefabcdef;
+using Anot = import "rpp_common/anot.capnp";
+interface ControlType $Anot.plugin("ControlType") {
+  item @0 () -> ();
+}
+""",
+                encoding="utf-8",
+            )
+
+            registered_types = manager.register_plugin_type_from_source(
+                source_path, "TestLib"
+            )
+
+            self.assertEqual(
+                registered_types[0]["PluginTypeName"], "TestLib::ControlType"
+            )
+            self.assertIn(
+                "TestLib::ControlType",
+                manager.get_library_plugin_types("TestLib"),
+            )
+            self.assertTrue(
+                manager.unregister_plugin_type("TestLib::ControlType")
+            )
+            self.assertNotIn(
+                "TestLib::ControlType",
+                manager.get_library_plugin_types("TestLib"),
+            )
+
+
     def test_refresh_component_library_includes_custom_plugins_in_manifest(self):
         with tempfile.TemporaryDirectory() as td:
             temp_root = Path(td)
