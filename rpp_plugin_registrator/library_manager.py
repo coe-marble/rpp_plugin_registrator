@@ -116,6 +116,19 @@ class LibraryManager:
         lib_name, type_name = plugin_name.split("::", 1)
         return lib_name, type_name
 
+    @staticmethod
+    def _canonical_plugin_name(plugin_name: str, library_name: str) -> str:
+        """Return a plugin name in its registry-qualified form."""
+        return plugin_name if "::" in plugin_name else f"{library_name}::{plugin_name}"
+
+    @classmethod
+    def _entry_plugin_name(cls, entry: dict[str, Any], library_name: str) -> str:
+        """Return the canonical plugin name stored by a plugins.json entry."""
+        name = entry.get("Name", "")
+        if not isinstance(name, str) or not name:
+            return ""
+        return cls._canonical_plugin_name(name, library_name)
+
     def get_type_of_plugin(self, plugin_name):
         """Get the plugin type of a registered plugin."""
         lib_name, _ = self.parse_plugin_name(plugin_name)
@@ -272,7 +285,8 @@ class LibraryManager:
 
 
     def get_plugin_info_from_file(self, plugin_file, desired_library,
-            plugin_name=None, persist_compiled_files=False) -> PluginInfo:
+            plugin_name=None, persist_compiled_files=False,
+            declared_plugin_type: str | None = None) -> PluginInfo:
         """Get plugin information from a plugin file."""
         parse_result = parse_plugin_file(plugin_file)
 
@@ -294,6 +308,9 @@ class LibraryManager:
                 raise ValueError(f"Plugin '{plugin_name}' not found in '{plugin_file}'.")
         else:
             desc = plugins[0]
+
+        if declared_plugin_type is not None:
+            desc = {**desc, "DeclaredPluginType": declared_plugin_type}
 
         plugin_info = PluginInfo(
             info=desc
@@ -448,16 +465,21 @@ class LibraryManager:
             raise ValueError(f"Failed to load plugins.json for library '{lib_name}': {e}")
 
         exts = get_supported_plugin_type_extensions()
-        for plugin_type_path in self._iter_registration_files(path,
+        for plugin_type_path, _ in self._iter_registration_files(path,
                 plugins.get(LIBRARY_PLUGIN_TYPES_KEY, []), exts, "Plugin type"):
             infos = ptyp_reg_api.register_plugin_type_from_source(plugin_type_path, lib_name, override=True)
             self.add_to_manifest(lib_name, plugin_type_or_list=infos)
 
         exts = get_supported_plugin_extensions()
-        for comp_path in self._iter_registration_files(path,
+        for comp_path, comp_entry in self._iter_registration_files(path,
                 plugins.get(LIBRARY_PLUGINS_KEY, []), exts, "Plugin"):
             try:
-                comp_info = self.get_plugin_info_from_file(comp_path, lib_name, persist_compiled_files=True)
+                comp_info = self.get_plugin_info_from_file(
+                    comp_path,
+                    lib_name,
+                    persist_compiled_files=True,
+                    declared_plugin_type=comp_entry.get("PluginType"),
+                )
             except Exception as e:
                 warnings.warn(f"Failed to get plugin info from '{comp_path}': {e}")
                 if throw:
@@ -614,15 +636,28 @@ class LibraryManager:
             if LIBRARY_PLUGINS_KEY not in plugins_data:
                 plugins_data[LIBRARY_PLUGINS_KEY] = []
 
-            for comp in plugins_data[LIBRARY_PLUGINS_KEY]:
-                plugin_name = f"{lib_name}::{comp['Name']}"
-                if plugin_name == plugin_info['PluginName']:
-                    warnings.warn(f"Plugin '{plugin_info['Name']}' already exists in library '{lib_name}'. Overwriting.")
-                    plugins_data[LIBRARY_PLUGINS_KEY].remove(comp)
-                    break
+            existing_plugins = plugins_data[LIBRARY_PLUGINS_KEY]
+            matching_entries = [
+                entry for entry in existing_plugins
+                if self._entry_plugin_name(entry, lib_name)
+                == plugin_info["PluginName"]
+            ]
+            if matching_entries:
+                warnings.warn(
+                    f"Plugin '{plugin_info['Name']}' already exists in library "
+                    f"'{lib_name}'. Overwriting.")
+                plugins_data[LIBRARY_PLUGINS_KEY] = [
+                    entry for entry in existing_plugins
+                    if self._entry_plugin_name(entry, lib_name)
+                    != plugin_info["PluginName"]
+                ]
 
             plugins_data[LIBRARY_PLUGINS_KEY].append(
-                build_library_plugin_file_plugin_type_entry(name=plugin_info['PluginName'], path=rel_path, entry_type="file")
+                build_library_plugin_file_plugin_type_entry(
+                    name=plugin_info["Name"],
+                    path=rel_path,
+                    entry_type="file",
+                )
             )
             write_json(Path(plugins_file), plugins_data, indent=4, sort_keys=False)
 
@@ -710,12 +745,16 @@ class LibraryManager:
             # unregister from plugins.json
             plugins_file = self._plugins_path(lib_path)
             plugins_data = load_json5(Path(plugins_file))
-            found = False
-            for comp in plugins_data.get(LIBRARY_PLUGINS_KEY, []):
-                if comp['Name'] == plugin_name:
-                    plugins_data[LIBRARY_PLUGINS_KEY].remove(comp)
-                    found = True
-                    break
+            existing_plugins = plugins_data.get(LIBRARY_PLUGINS_KEY, [])
+            matching_entries = [
+                entry for entry in existing_plugins
+                if self._entry_plugin_name(entry, lib_name) == plugin_name
+            ]
+            found = bool(matching_entries)
+            plugins_data[LIBRARY_PLUGINS_KEY] = [
+                entry for entry in existing_plugins
+                if self._entry_plugin_name(entry, lib_name) != plugin_name
+            ]
 
             if throw_if_not_found and not found:
                 raise ValueError(f"Plugin '{plugin_name}' "
@@ -777,7 +816,7 @@ class LibraryManager:
                 description_files = sorted(scan_folder.rglob(glob_pattern))
 
                 for description_file in description_files:
-                    yield description_file
+                    yield description_file, entry
             else:
                 description_file = Path(base_path) / entry_path
                 if not description_file.is_file():
@@ -786,7 +825,7 @@ class LibraryManager:
                 if description_file.suffix.lower() not in search_file_extensions:
                     warnings.warn(f"{entry_label} source '{description_file}' is not a Python file. Skipping...")
                     continue
-                yield description_file
+                yield description_file, entry
 
     def _resolve_plugin_name_and_library(self, plugin_name, lib_name_or_path=None):
         if lib_name_or_path is None:

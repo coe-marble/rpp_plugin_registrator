@@ -1,7 +1,8 @@
 import os
-from pathlib import Path
+import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from rpp_plugin_registrator.registry_config import (
@@ -208,6 +209,13 @@ def get_cpp_imports_and_libraries_for_library(
                     + f" version does not satisfy the requirement '{dep_operator}{dep_version}'.")
 
     dependency_infos = []
+    if get_setting("USE_ROS2_COMPILATION"):
+        library_dirs, library_files = get_exported_ros_library_flags(library_name)
+        dependency_infos.append({
+            "IncludeDirs": [],
+            "LibDirs": library_dirs,
+            "LibsToLink": library_files,
+        })
     if "RosDependencies" in library_info and library_info["RosDependencies"]:
         ros_dependencies = library_info["RosDependencies"]
 
@@ -270,6 +278,62 @@ def get_default_ros_dependencies(
         "LibsToLink": libs_to_link
     }
 
+def _is_linkable_library(library_dir: Path, library_name: str) -> bool:
+    """Return whether a ROS package exports a conventional linkable library."""
+    candidates = (
+        library_dir / f"lib{library_name}.so",
+        library_dir / f"lib{library_name}.a",
+        library_dir / f"lib{library_name}.dylib",
+        library_dir / f"{library_name}.lib",
+    )
+    return any(candidate.exists() for candidate in candidates) or any(
+        library_dir.glob(f"lib{library_name}.so.*"))
+
+
+def _get_exported_library_flags(
+        package_prefix: Path, package_name: str) -> Tuple[List[str], List[str]]:
+    """Read linkable targets from an ament package's primary export set."""
+    export_directory = package_prefix / "share" / package_name / "cmake"
+    export_files = export_directory.glob(
+        f"export_{package_name}Export-*.cmake")
+    exported_locations: List[str] = []
+    for export_file in export_files:
+        export_text = export_file.read_text(encoding="utf-8")
+        exported_locations.extend(re.findall(
+            r'IMPORTED_LOCATION_[A-Z]+ "\$\{_IMPORT_PREFIX\}/([^"]+)"',
+            export_text,
+        ))
+
+    library_directories: List[str] = []
+    libraries_to_link: List[str] = []
+    for relative_location in exported_locations:
+        library_path = package_prefix / relative_location
+        if not library_path.is_file():
+            continue
+        library_directory = str(library_path.parent)
+        if library_directory not in library_directories:
+            library_directories.append(library_directory)
+        linker_name = f":{library_path.name}"
+        if linker_name not in libraries_to_link:
+            libraries_to_link.append(linker_name)
+    return library_directories, libraries_to_link
+
+
+def get_exported_ros_library_flags(package_name: str) -> Tuple[List[str], List[str]]:
+    """Resolve a ROS package's primary exported libraries through ament metadata."""
+    from ament_index_python.packages import (
+        get_package_share_directory,
+        PackageNotFoundError,
+    )
+
+    try:
+        package_prefix = Path(
+            get_package_share_directory(package_name)).parent.parent
+    except PackageNotFoundError:
+        return [], []
+    return _get_exported_library_flags(package_prefix, package_name)
+
+
 def try_get_ros_dependency_info(dep_name: str, lm) -> Optional[Dict[str, Any]]:
     from ament_index_python.packages import (
         get_package_share_directory,
@@ -291,11 +355,11 @@ def try_get_ros_dependency_info(dep_name: str, lm) -> Optional[Dict[str, Any]]:
         if (dep_include_dir / f"{dep_name}" / "msg").is_dir() \
                 or (dep_include_dir / f"{dep_name}" / "srv").is_dir() \
                 or (dep_include_dir / f"{dep_name}" / "action").is_dir():
-            # STUPID HACK: If the package has msg, srv, or action directories,
-            # we assume it has generated code and needs to link against the library with the same name as the package.
-            libs_to_link.append(f"{dep_name}__rosidl_typesupport_cpp")
+            library_name = f"{dep_name}__rosidl_typesupport_cpp"
         else:
-            libs_to_link.append(dep_name)
+            library_name = dep_name
+        if _is_linkable_library(prefix_dir / "lib", library_name):
+            libs_to_link.append(library_name)
         return {
             "Name": dep_name,
             "Version": version,

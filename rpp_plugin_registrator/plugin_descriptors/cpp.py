@@ -99,7 +99,11 @@ def parse_cpp_plugin(source_file: Path, plugin_id: Optional[str]) -> ParsePlugin
 
     def extract_base_class_names(class_node) -> List[str]:
         text = node_text(class_node)
-        header_match = re.search(r"\b(class|struct)\s+[A-Za-z_][A-Za-z0-9_:]*\s*:(.*?)\{", text, re.DOTALL)
+        header_match = re.search(
+            r"\b(class|struct)\s+[A-Za-z_][A-Za-z0-9_:]*(?:\s+final)?\s*:(.*?)\{",
+            text,
+            re.DOTALL,
+        )
         if not header_match:
             return []
         bases: List[str] = []

@@ -51,7 +51,20 @@ def validate_cpp_plugin(desc: PluginInfo, plugin_types: Dict[str, PluginTypeInfo
     source_file = desc.info.get("SourceFile")
     class_name = desc.info.get("ClassName")
 
-    plugin_type = extract_plugin_type(desc, plugin_types)
+    declared_plugin_type = desc.info.get("DeclaredPluginType")
+    if declared_plugin_type is not None:
+        if not isinstance(declared_plugin_type, str) or not declared_plugin_type:
+            return early_return_invalid(
+                f"Plugin class '{class_name}' declares an invalid PluginType."
+            )
+        plugin_type = declared_plugin_type
+        if plugin_type not in plugin_types:
+            return early_return_invalid(
+                f"Plugin class '{class_name}' declares unknown PluginType "
+                f"'{plugin_type}'."
+            )
+    else:
+        plugin_type = extract_plugin_type(desc, plugin_types)
     if plugin_type is None:
         return early_return_invalid(
             f"Plugin class '{class_name}' does not inherit from any known plugin type."

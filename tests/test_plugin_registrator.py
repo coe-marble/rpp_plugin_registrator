@@ -11,6 +11,9 @@ import rpp_plugin_registrator
 from rpp_plugin_registrator.library_manager import LibraryManager
 from rpp_plugin_registrator import registry_config as rp
 from rpp_plugin_registrator.plugin_validators.dispatch import PluginValidationResult, PluginValidationData
+from rpp_plugin_registrator.plugin_descriptors import parse_plugin_file
+from rpp_plugin_registrator.plugin_descriptors.core import PluginInfo, PluginTypeInfo
+from rpp_plugin_registrator.plugin_validators.cpp import validate_cpp_plugin
 import rpp_plugin_registrator.registry_config
 
 
@@ -176,6 +179,14 @@ class MyPlugin(MotionController2D):
             plugins_path.write_text(json.dumps(plugins_payload, indent=2) + "\n", encoding="utf-8")
 
             manager.refresh_plugin_library("TestLib")
+            manager.refresh_plugin_library("TestLib")
+
+            refreshed_plugins = json5.loads(
+                plugins_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [entry["Name"] for entry in refreshed_plugins["Plugins"]],
+                ["MyPlugin"],
+            )
 
             manifest_path = rp.get_app_library_manifest_path_json("TestLib")
             manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -192,7 +203,6 @@ class MyPlugin(MotionController2D):
                 str(plugin_path.resolve()),
             )
             self.assertEqual(manifest_payload["Plugins"]["TestLib::MyPlugin"]["Library"], "TestLib")
-
 
     def test_library_package_json_parse(self):
         with tempfile.TemporaryDirectory() as td:
@@ -338,6 +348,14 @@ class HelloPlugin(MotionController2D):
         self.assertEqual(hello_item["PluginTypeLibrary"], "rpp_testing")
         self.assertTrue("PluginTypeSharedLibraryPath" in hello_item)
         self.assertIsNone(hello_item.get("PluginSharedLibraryPath"))
+
+        plugins_manifest = json5.loads(
+            (Path(lib_handle.path) / "plugins.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            [entry["Name"] for entry in plugins_manifest["Plugins"]],
+            ["HelloPlugin"],
+        )
 
         shared_lib_path = hello_item["PluginTypeSharedLibraryPath"]
         registry_path = rp.get_app_registry_path()
@@ -530,6 +548,76 @@ class CppPluginRegistratorTests(unittest.TestCase):
         rpp_plugin_registrator.registry_config.reset_module()
         rp.RPP_HOME = self._original_rpp_home
         rp.reset_module()
+
+    def test_parse_cpp_plugin_with_final_base_class(self):
+        with tempfile.TemporaryDirectory() as td:
+            source_path = Path(td) / "final_plugin.hpp"
+            source_path.write_text(
+                "class FinalPlugin final : public example::PluginType {};\n",
+                encoding="utf-8",
+            )
+
+            result = parse_plugin_file(source_path)
+
+            self.assertTrue(result.is_valid)
+            self.assertEqual(
+                result.data.plugins[0]["BaseClasses"],
+                ["example::PluginType"],
+            )
+
+    def test_cpp_plugin_type_override_does_not_require_direct_base(self):
+        source_path = Path(self._home_dir.name) / "explicit_plugin.hpp"
+        source_path.write_text(
+            "class ExplicitPlugin final : public PrivateBase {};\n",
+            encoding="utf-8",
+        )
+        desc = PluginInfo(
+            info={
+                "SourceFile": str(source_path),
+                "ClassName": "ExplicitPlugin",
+                "BaseClasses": ["PrivateBase"],
+                "DeclaredPluginType": "TestLib::KnownPluginType",
+            }
+        )
+        plugin_types = {
+            "TestLib::KnownPluginType": PluginTypeInfo(
+                info={
+                    "Library": "TestLib",
+                    "ClassName": "KnownPluginType",
+                    "SourceFile": "plugin_types/known.capnp",
+                    "FullyQualifiedClassName": "TestLib::KnownPluginType",
+                }
+            )
+        }
+
+        with mock.patch(
+            "rpp_plugin_registrator.plugin_validators.cpp.compile_cpp_plugin",
+            return_value=(None, [], None),
+        ) as compile_plugin:
+            validation = validate_cpp_plugin(desc, plugin_types)
+
+        self.assertTrue(validation.is_valid)
+        self.assertEqual(
+            validation.validation_data.plugin_type,
+            "TestLib::KnownPluginType",
+        )
+        self.assertEqual(
+            compile_plugin.call_args.kwargs["plugin_type_name"],
+            "TestLib::KnownPluginType",
+        )
+
+    def test_cpp_plugin_type_override_rejects_unknown_type(self):
+        desc = PluginInfo(
+            info={
+                "ClassName": "ExplicitPlugin",
+                "DeclaredPluginType": "TestLib::UnknownPluginType",
+            }
+        )
+
+        validation = validate_cpp_plugin(desc, {})
+
+        self.assertFalse(validation.is_valid)
+        self.assertIn("declares unknown PluginType", validation.message)
 
     def test_register_cpp_plugin_with_components_then_unregister(self):
 
