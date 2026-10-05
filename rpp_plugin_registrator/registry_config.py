@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 SCHEMA_VERSION = 1
-RPP_HOME = Path.home() / ".rpp"
+RPP_HOME = Path(
+    os.environ.get("RPP_HOME", str(Path.home() / ".rpp"))
+).expanduser().resolve()
 INITIALIZED_MARKER_FILENAME = ".initialized"
 USE_ROS2_COMPILATION = False
 RPP_CPP_CORE_PATH = None
