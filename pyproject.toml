@@ -1,3 +1,22 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "rpp-plugin-registrator"
+version = "0.1.0"
+description = "RPP plugin registrator"
+dependencies = [
+    "PyQt6",
+    "json5",
+    "tree-sitter",
+    "tree-sitter-cpp",
+    "pycapnp",
+    "xmltodict",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["rpp_plugin_registrator", "rpp_plugin_registrator.*"]
