@@ -38,7 +38,11 @@ def get_plugin_type_shared_library_flags(
 def get_cpp_imports_for_rpp() -> List[str]:
     interfaces = get_app_interfaces_path()
 
-    paths = [str(Path(interfaces) / "cpp"), str(RPP_CPP_PATH / "include")]
+    paths = [
+        str(Path(interfaces) / "cpp"),
+        str(RPP_CPP_PATH / "include"),
+        str(RPP_CPP_PATH / "include" / "rpp_cpp"),
+    ]
     return paths
 
 def get_plugin_type_shared_library_path(
