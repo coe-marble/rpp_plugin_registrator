@@ -220,6 +220,9 @@ def create_adapter_server_methods_string_with_type_alisases_and_imports(
         self._logger.debug(
             f"Backend completed: component={{self._adapter_server_info.name!r}}, "
             f"method='{method.name}'.")
+        # Schema dataclasses cannot be serialized by the RPC layer directly.
+        if hasattr(result, "as_dict"):
+            return result.as_dict()
         return result
 '''
 
