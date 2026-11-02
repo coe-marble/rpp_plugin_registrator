@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from rpp_py.parameter_description import ParameterDescription
+from rpp_common.parameter_description import ParameterDescription
 
 from ..utils import to_snake_case
 

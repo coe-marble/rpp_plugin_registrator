@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
-import sys, os
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Dict
 
 import json5
@@ -34,48 +36,53 @@ def write_json(path: Path, data: Dict[str, Any], *, indent: int = 2, sort_keys: 
     )
 
 
-def import_module_from_path(module_path: str, allow_relative_imports=False):
-    if not os.path.exists(module_path):
+def import_module_from_path(module_path: str | Path, allow_relative_imports: bool = False):
+    path = Path(module_path).resolve()
+    if not path.is_file():
         raise ValueError(f"Module path '{module_path}' does not exist.")
-    module_name = os.path.splitext(os.path.basename(module_path))[0]
+    module_name = path.stem
     if not allow_relative_imports:
-        spec = importlib.util.spec_from_file_location(module_name, module_path)
+        spec = importlib.util.spec_from_file_location(module_name, path)
         if spec is None or spec.loader is None:
             raise ValueError(f"Could not find module '{module_name}' at path '{module_path}'.")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
-    path = Path(module_path).resolve()
-    module_name = path.stem
-    parent_dir = path.parent
-    package_name = parent_dir.name
 
-    path_added = False
-    if str(parent_dir) not in sys.path:
-        path_added = True
-        sys.path.insert(0, str(parent_dir))
+    parent_dir = path.parent
+    path_hash = hashlib.sha256(str(parent_dir).encode("utf-8")).hexdigest()[:16]
+    package_name = f"_rpp_plugin_{path_hash}"
+    qualified_name = f"{package_name}.{module_name}"
+
+    cached_module = sys.modules.get(qualified_name)
+    cached_path = getattr(cached_module, "__file__", None)
+    if cached_module is not None and cached_path and Path(cached_path).resolve() == path:
+        return cached_module
+
+    package_created = package_name not in sys.modules
+    if package_created:
+        package = ModuleType(package_name)
+        package.__path__ = [str(parent_dir)]
+        package.__package__ = package_name
+        package.__file__ = str(parent_dir / "__init__.py")
+        sys.modules[package_name] = package
 
     spec = importlib.util.spec_from_file_location(
-        f"{package_name}.{module_name}",
+        qualified_name,
         str(path)
     )
 
-    if spec is None:
+    if spec is None or spec.loader is None:
         raise ImportError(f"Unable to create specification for module {module_path}")
 
     module = importlib.util.module_from_spec(spec)
-
-    module.__package__ = package_name
-    module.__path__ = [str(parent_dir)]
-    sys.modules[package_name] = sys.modules.get(package_name, module)
-    sys.modules[f"{package_name}.{module_name}"] = module
+    sys.modules[qualified_name] = module
     try:
         spec.loader.exec_module(module)
         return module
-    except Exception as e:
-        # Čišćenje u slučaju greške
-        sys.modules.pop(f"{package_name}.{module_name}", None)
-        if path_added:
-            sys.path = sys.path[1:]
-        raise e
+    except Exception:
+        sys.modules.pop(qualified_name, None)
+        if package_created:
+            sys.modules.pop(package_name, None)
+        raise
 

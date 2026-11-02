@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
-from rpp_py.parameter_description import ParameterDescription
+from rpp_common.parameter_description import ParameterDescription
 from rpp_plugin_registrator.plugin_descriptors.core import (
     PluginInfo, PluginRegisterData, PluginRegistrationResult, PluginTypeInfo
 )
@@ -80,11 +80,12 @@ def parse_plugin_components(comps: Dict[str, str]):
 
 
 
-def add_to_init_file(directory: str, class_name: str) -> None:
+def add_to_init_file(directory: Path | str, class_name: str) -> None:
     if not directory:
         raise ValueError("Directory path must be provided.")
 
-    Path(directory).mkdir(parents=True, exist_ok=True)
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
     init_file_path = directory / "__init__.py"
     if not init_file_path.exists():
         init_file_path.write_text("# Auto-generated __init__.py\n", encoding="utf-8")
@@ -95,9 +96,10 @@ def add_to_init_file(directory: str, class_name: str) -> None:
         if line not in lines:
             f.write(line)
 
-def remove_from_init_file(directory: str, class_name: str) -> None:
+def remove_from_init_file(directory: Path | str, class_name: str) -> None:
     if not directory:
         raise ValueError("Directory path must be provided.")
+    directory = Path(directory)
     init_file_path = directory / "__init__.py"
     if not init_file_path.exists():
         return  # Nothing to remove

@@ -297,17 +297,22 @@ class LibraryManager:
         if len(plugins) == 0:
             raise ValueError(f"No plugin found in '{plugin_file}'.")
 
-        if plugin_name is not None:
-            if len(plugins) > 1:
-                raise ValueError(f"Multiple plugins found in '{plugin_file}'. Please specify a plugin name.")
-            for _, desc in plugins:
-                plugin = desc.get("Plugin", {})
-                if plugin.get("Name") == plugin_name:
-                    break
-            else:
-                raise ValueError(f"Plugin '{plugin_name}' not found in '{plugin_file}'.")
-        else:
+        if plugin_name is None:
+            if len(plugins) != 1:
+                raise ValueError(
+                    f"Multiple plugins found in '{plugin_file}'. Please specify a plugin name."
+                )
             desc = plugins[0]
+        else:
+            selector = plugin_name.split("::")[-1]
+            matches = [
+                desc for desc in plugins
+                if desc.get("Plugin", {}).get("Name") in {plugin_name, selector}
+                or desc.get("ClassName") in {plugin_name, selector}
+            ]
+            if len(matches) != 1:
+                raise ValueError(f"Plugin '{plugin_name}' not found uniquely in '{plugin_file}'.")
+            desc = matches[0]
 
         if declared_plugin_type is not None:
             desc = {**desc, "DeclaredPluginType": declared_plugin_type}
@@ -800,7 +805,7 @@ class LibraryManager:
         return filtered
 
     def _iter_registration_files(self, base_path, entries, search_file_extensions, entry_label):
-        glob_pattern = f"*.[{''.join(search_file_extensions)}]"
+        supported_extensions = {extension.lower() for extension in search_file_extensions}
         for entry in self._normalize_registration_entries(entries):
             entry_type = entry.get('Type', 'file')
             entry_path = entry.get('Path')
@@ -813,7 +818,10 @@ class LibraryManager:
                     warnings.warn(f"{entry_label} folder '{scan_folder}' does not exist. Skipping...")
                     continue
 
-                description_files = sorted(scan_folder.rglob(glob_pattern))
+                description_files = sorted(
+                    path for path in scan_folder.rglob("*")
+                    if path.is_file() and path.suffix.lower() in supported_extensions
+                )
 
                 for description_file in description_files:
                     yield description_file, entry
@@ -822,8 +830,11 @@ class LibraryManager:
                 if not description_file.is_file():
                     warnings.warn(f"{entry_label} source '{description_file}' not found. Skipping...")
                     continue
-                if description_file.suffix.lower() not in search_file_extensions:
-                    warnings.warn(f"{entry_label} source '{description_file}' is not a Python file. Skipping...")
+                if description_file.suffix.lower() not in supported_extensions:
+                    warnings.warn(
+                        f"{entry_label} source '{description_file}' has an unsupported "
+                        "file extension. Skipping..."
+                    )
                     continue
                 yield description_file, entry
 
