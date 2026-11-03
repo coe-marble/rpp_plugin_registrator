@@ -21,6 +21,8 @@ def register_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
         result = register_cpp_plugin(plugin_info)
     else:
         raise ValueError(f"No registrator available for source language '{source_language}'.")
+    if not result.success:
+        return result
     if result.register_data.plugin_type_shared_library_path is None:
         shared_lib_path = get_plugin_type_shared_library_path(
             plugin_info.validation_data.plugin_type_library,

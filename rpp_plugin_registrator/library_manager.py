@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from contextlib import contextmanager
 from typing import Any, Union
 import json5
 import os, sys
@@ -42,6 +44,67 @@ from rpp_plugin_registrator.payload_builders import (
 class LibraryHandle:
     path: Path
     name: str
+
+
+@contextmanager
+def _restore_on_registration_failure(files=(), trees=()):
+    """Restore scoped metadata after an exception, retaining the original error."""
+    paths = {Path(path) for path in files}
+    trees = [Path(path) for path in trees]
+    existing_directories = set()
+    for tree in trees:
+        if tree.exists():
+            existing_directories.add(tree)
+            for path in tree.rglob("*"):
+                if path.is_dir():
+                    existing_directories.add(path)
+                elif path.is_file():
+                    paths.add(path)
+    originals = {path: path.read_bytes() if path.exists() else None for path in paths}
+    missing_directories = set()
+    for path in [*paths, *trees]:
+        parent = path.parent
+        while not parent.exists():
+            missing_directories.add(parent)
+            parent = parent.parent
+
+    try:
+        yield
+    except Exception:
+        directories = set(missing_directories)
+        for tree in trees:
+            try:
+                if tree.exists():
+                    if tree not in existing_directories:
+                        directories.add(tree)
+                    for path in tree.rglob("*"):
+                        if path.is_dir():
+                            if path not in existing_directories:
+                                directories.add(path)
+                        elif path.is_file():
+                            paths.add(path)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Could not inspect registration directory during rollback: %s", tree)
+        for path in paths:
+            try:
+                original = originals.get(path)
+                if original is None:
+                    path.unlink(missing_ok=True)
+                elif not path.exists() or path.read_bytes() != original:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(original)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Could not roll back registration file %s", path)
+        for directory in sorted(directories, key=lambda path: len(path.parts), reverse=True):
+            try:
+                if directory.exists():
+                    directory.rmdir()
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Could not remove registration directory %s", directory)
+        raise
 
 
 class LibraryManager:
@@ -498,35 +561,32 @@ class LibraryManager:
         lib_path = Path(path).resolve()
         dest_path = Path(reg_path) / lib_path.name
 
+        json_path = dest_path.with_suffix('.json')
         if not link_register:
             if dest_path.exists():
                 raise FileExistsError(f"Library '{lib_path.name}' already exists in registry")
-            shutil.copytree(lib_path, dest_path)
-            lib_path = dest_path
         else:
-            json_path = dest_path.with_suffix('.json')
             info = self.get_library_info(lib_path, only_registered=False)
             if json_path.exists():
                 raise FileExistsError(f"Library '{lib_path.name}' already exists in registry")
-            with open(json_path, 'w', encoding=self.file_text_encoding) as f:
-                json.dump({
-                    'Path': str(lib_path),
-                    'Library': info['Library'],
-                    'Version': info.get('Version', '0.0.1')
-                }, f, indent=4)
 
-        self.ensure_library_structure(lib_path, lib_path.name)
-
-        try:
-            self.refresh_plugin_library(lib_path.name)
-        except Exception as e:
+        metadata_root = self._manifest_path(lib_path.name).parent
+        with _restore_on_registration_failure(
+                files=[rp.get_app_registry_json_path(), *([json_path] if link_register else [])],
+                trees=[metadata_root, *([] if link_register else [dest_path])]):
             if link_register:
-                if json_path.exists():
-                    json_path.unlink()
+                with open(json_path, 'w', encoding=self.file_text_encoding) as f:
+                    json.dump({
+                        'Path': str(lib_path),
+                        'Library': info['Library'],
+                        'Version': info.get('Version', '0.0.1')
+                    }, f, indent=4)
             else:
-                if dest_path.exists():
-                    shutil.rmtree(dest_path)
-            raise e
+                shutil.copytree(lib_path, dest_path)
+                lib_path = dest_path
+
+            self.ensure_library_structure(lib_path, lib_path.name)
+            self.refresh_plugin_library(lib_path.name)
 
         return str(lib_path)
 
@@ -609,7 +669,9 @@ class LibraryManager:
 
         registration_result = p_reg_api.register_plugin(plugin_info)
         if not registration_result.success:
-            raise ValueError(f"Failed to register plugin '{plugin_info['Name']}' in library '{lib_name}'")
+            raise ValueError(
+                f"Failed to register plugin '{plugin_info.info['Name']}' in library '{lib_name}': "
+                f"{registration_result.message or 'Unknown registration error'}")
         desc = plugin_info.info
         rel_path = os.path.relpath(desc['SourceFile'], lib_path)
         if rel_path.startswith('/'):
@@ -635,42 +697,51 @@ class LibraryManager:
         if registration_result.register_data is not None:
             plugin_info = {**plugin_info, **registration_result.register_data.as_dict()}
 
+        metadata_files = []
         if append_to_json:
-            plugins_file = self._plugins_path(lib_path)
-            plugins_data = load_json5(Path(plugins_file))
-            if LIBRARY_PLUGINS_KEY not in plugins_data:
-                plugins_data[LIBRARY_PLUGINS_KEY] = []
+            metadata_files.append(Path(self._plugins_path(lib_path)))
+        if append_to_manifest:
+            metadata_files.extend([
+                rp.get_app_registry_plugin_json_path(plugin_info['PluginName']),
+                self._manifest_path(lib_name),
+            ])
+        with _restore_on_registration_failure(files=metadata_files):
+            if append_to_json:
+                plugins_file = self._plugins_path(lib_path)
+                plugins_data = load_json5(Path(plugins_file))
+                if LIBRARY_PLUGINS_KEY not in plugins_data:
+                    plugins_data[LIBRARY_PLUGINS_KEY] = []
 
-            existing_plugins = plugins_data[LIBRARY_PLUGINS_KEY]
-            matching_entries = [
-                entry for entry in existing_plugins
-                if self._entry_plugin_name(entry, lib_name)
-                == plugin_info["PluginName"]
-            ]
-            if matching_entries:
-                warnings.warn(
-                    f"Plugin '{plugin_info['Name']}' already exists in library "
-                    f"'{lib_name}'. Overwriting.")
-                plugins_data[LIBRARY_PLUGINS_KEY] = [
+                existing_plugins = plugins_data[LIBRARY_PLUGINS_KEY]
+                matching_entries = [
                     entry for entry in existing_plugins
                     if self._entry_plugin_name(entry, lib_name)
-                    != plugin_info["PluginName"]
+                    == plugin_info["PluginName"]
                 ]
+                if matching_entries:
+                    warnings.warn(
+                        f"Plugin '{plugin_info['Name']}' already exists in library "
+                        f"'{lib_name}'. Overwriting.")
+                    plugins_data[LIBRARY_PLUGINS_KEY] = [
+                        entry for entry in existing_plugins
+                        if self._entry_plugin_name(entry, lib_name)
+                        != plugin_info["PluginName"]
+                    ]
 
-            plugins_data[LIBRARY_PLUGINS_KEY].append(
-                build_library_plugin_file_plugin_type_entry(
-                    name=plugin_info["Name"],
-                    path=rel_path,
-                    entry_type="file",
+                plugins_data[LIBRARY_PLUGINS_KEY].append(
+                    build_library_plugin_file_plugin_type_entry(
+                        name=plugin_info["Name"],
+                        path=rel_path,
+                        entry_type="file",
+                    )
                 )
-            )
-            write_json(Path(plugins_file), plugins_data, indent=4, sort_keys=False)
+                write_json(Path(plugins_file), plugins_data, indent=4, sort_keys=False)
 
-        if append_to_manifest:
-            plugin_path = rp.get_app_registry_plugin_json_path(
-                plugin_info['PluginName'])
-            write_json(plugin_path, plugin_info, indent=2, sort_keys=False)
-            self.add_to_manifest(lib_name, plugin_or_list=plugin_info)
+            if append_to_manifest:
+                plugin_path = rp.get_app_registry_plugin_json_path(
+                    plugin_info['PluginName'])
+                write_json(plugin_path, plugin_info, indent=2, sort_keys=False)
+                self.add_to_manifest(lib_name, plugin_or_list=plugin_info)
         return plugin_info
 
     def load_lib_manifest(self, lib_path):
