@@ -1,5 +1,4 @@
 import tempfile
-import unittest
 from pathlib import Path
 
 from rpp_plugin_registrator.plugin_registrator.cpp_helpers import (
@@ -8,18 +7,17 @@ from rpp_plugin_registrator.plugin_registrator.cpp_helpers import (
 )
 
 
-class LinkableLibraryTests(unittest.TestCase):
+class TestLinkableLibrary:
     def test_header_only_package_is_not_linked(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            self.assertFalse(
-                _is_linkable_library(Path(temporary_directory), "header_only"))
+            assert not (_is_linkable_library(Path(temporary_directory), "header_only"))
 
     def test_shared_library_is_linked(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             library_directory = Path(temporary_directory)
             (library_directory / "librpp_test.so").touch()
 
-            self.assertTrue(_is_linkable_library(library_directory, "rpp_test"))
+            assert _is_linkable_library(library_directory, "rpp_test")
 
     def test_exported_ament_library_is_linked_by_exact_filename(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -37,5 +35,5 @@ class LinkableLibraryTests(unittest.TestCase):
             library_dirs, libraries = _get_exported_library_flags(
                 package_prefix, "test_package")
 
-            self.assertEqual(library_dirs, [str(library_directory)])
-            self.assertEqual(libraries, [":libtest_core.so"])
+            assert library_dirs == [str(library_directory)]
+            assert libraries == [":libtest_core.so"]
