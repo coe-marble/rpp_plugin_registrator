@@ -11,7 +11,7 @@ from rpp_plugin_registrator.library_manager import LibraryManager
 from rpp_plugin_registrator import registry_config as rp
 from rpp_plugin_registrator.plugin_validators.dispatch import PluginValidationResult, PluginValidationData
 from rpp_plugin_registrator.plugin_descriptors import parse_plugin_file
-from rpp_plugin_registrator.plugin_descriptors.core import PluginInfo, PluginTypeInfo
+from rpp_plugin_registrator.plugin_descriptors.core import PluginInfo
 from rpp_plugin_registrator.plugin_validators.cpp import validate_cpp_plugin
 import rpp_plugin_registrator.registry_config
 
@@ -546,14 +546,12 @@ class TestCppPluginRegistrator:
             }
         )
         plugin_types = {
-            "TestLib::KnownPluginType": PluginTypeInfo(
-                info={
-                    "Library": "TestLib",
-                    "ClassName": "KnownPluginType",
-                    "SourceFile": "plugin_types/known.capnp",
-                    "FullyQualifiedClassName": "TestLib::KnownPluginType",
-                }
-            )
+            "TestLib::KnownPluginType": {
+                "Library": "TestLib",
+                "ClassName": "KnownPluginType",
+                "SourceFile": "plugin_types/known.capnp",
+                "FullyQualifiedClassName": "TestLib::KnownPluginType",
+            }
         }
 
         with mock.patch(

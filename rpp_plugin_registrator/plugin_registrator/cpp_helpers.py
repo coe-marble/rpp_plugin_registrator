@@ -96,7 +96,10 @@ def get_cpp_shared_libraries_path(
 
 def get_rpp_cpp_core_shared_library_path() -> Tuple[str, str]:
     """Get the path to the shared libraries for the rpp_cpp_core library."""
-    rpp_cpp_core_path = get_setting("RPP_CPP_CORE_PATH")
+    rpp_cpp_core_path = (
+        os.environ.get("RPP_CPP_CORE_PATH")
+        or get_setting("RPP_CPP_CORE_PATH")
+    )
     if rpp_cpp_core_path is not None:
         return rpp_cpp_core_path, "rpp_cpp_core"
     elif get_setting("USE_ROS2_COMPILATION"):
