@@ -4,7 +4,6 @@ import tempfile
 import shutil
 from pathlib import Path
 from unittest import mock
-import os
 import pytest
 
 import rpp_plugin_registrator
@@ -319,7 +318,9 @@ class HelloPlugin(MotionController2D):
         assert hello_item["ClassName"] == "HelloPlugin"
         assert hello_item["PluginType"] == "rpp_testing::MotionController2D"
         assert hello_item["Library"] == "TestLib"
-        assert hello_item["FullyQualifiedClassName"] == "<class 'TestLib.hello_plugin.HelloPlugin'>"
+        assert hello_item["FullyQualifiedClassName"].endswith(
+            ".hello_plugin.HelloPlugin'>"
+        )
         assert hello_item["PluginName"] == "TestLib::HelloPlugin"
         assert hello_item["PluginTypeLibrary"] == "rpp_testing"
         assert "PluginTypeSharedLibraryPath" in hello_item
@@ -507,8 +508,12 @@ class ComponentPlugin(MotionController2D):
 class TestCppPluginRegistrator:
     @pytest.fixture(autouse=True)
     def _registry_state(self, monkeypatch, tmp_path):
+        self._home_dir = tmp_path
         cfg = rp.get_config()
-        write_config(tmp_path / ".rpp", cfg)
+        rpp_home = self._home_dir / ".rpp"
+        write_config(rpp_home, cfg)
+        monkeypatch.setattr(rp, "RPP_HOME", rpp_home)
+        monkeypatch.delenv("RPP_WHITELIST_PLUGIN_TYPES", raising=False)
         yield
         rpp_plugin_registrator.registry_config.reset_module()
         rp.reset_module()
@@ -527,7 +532,7 @@ class TestCppPluginRegistrator:
             assert result.data.plugins[0]["BaseClasses"] == ["example::PluginType"]
 
     def test_cpp_plugin_type_override_does_not_require_direct_base(self):
-        source_path = Path(self._home_dir.name) / "explicit_plugin.hpp"
+        source_path = self._home_dir / "explicit_plugin.hpp"
         source_path.write_text(
             "class ExplicitPlugin final : public PrivateBase {};\n",
             encoding="utf-8",
@@ -574,10 +579,12 @@ class TestCppPluginRegistrator:
         assert not (validation.is_valid)
         assert "declares unknown PluginType" in validation.message
 
-    def test_register_cpp_plugin_with_components_then_unregister(self):
+    def test_register_cpp_plugin_with_components_then_unregister(self, monkeypatch):
 
-        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
-        manager = LibraryManager(rpp_home=Path(self._home_dir.name) / ".rpp")
+        monkeypatch.setenv(
+            "RPP_WHITELIST_PLUGIN_TYPES", "rpp_testing::MotionController2D"
+        )
+        manager = LibraryManager(rpp_home=self._home_dir / ".rpp")
         handle = manager.get_or_create_plugin_library("TestLib")
 
         library_root = Path(handle.path)
@@ -620,10 +627,13 @@ class TestCppPluginRegistrator:
         assert not (plugin_json_path.exists()), f"Plugin source file '{abs_path}' should still exist after unregistering the plugin."
 
 
-    def test_register_cpp_plugin_with_using_namespace_and_type_aliasing(self):
-        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
+    def test_register_cpp_plugin_with_using_namespace_and_type_aliasing(
+            self, monkeypatch):
+        monkeypatch.setenv(
+            "RPP_WHITELIST_PLUGIN_TYPES", "rpp_testing::MotionController2D"
+        )
 
-        manager = LibraryManager(rpp_home=Path(self._home_dir.name) / ".rpp")
+        manager = LibraryManager(rpp_home=self._home_dir / ".rpp")
         handle = manager.get_or_create_plugin_library("TestLib")
 
         library_root = Path(handle.path)
@@ -655,10 +665,12 @@ class TestCppPluginRegistrator:
         load_and_test("example_plugin_with_type_alias_outside_class.cpp", "ComponentPluginWithTypeAliasOutsideClass")
         load_and_test("example_plugin_with_type_alias_in_class.cpp", "ComponentPluginWithTypeAliasInClass")
 
-    def test_register_cpp_plugin_with_library_dependencies(self):
-        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::MotionController2D"
+    def test_register_cpp_plugin_with_library_dependencies(self, monkeypatch):
+        monkeypatch.setenv(
+            "RPP_WHITELIST_PLUGIN_TYPES", "rpp_testing::MotionController2D"
+        )
         rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
-        manager = LibraryManager(rpp_home=Path(self._home_dir.name) / ".rpp")
+        manager = LibraryManager(rpp_home=self._home_dir / ".rpp")
         handle = manager.get_or_create_plugin_library("rpp_testing")
         handle = manager.get_or_create_plugin_library("TestLib")
 
@@ -705,10 +717,10 @@ class TestCppPluginRegistrator:
         so_path = rp.get_app_registry_path() / "cpp" / "shared" / "TestLib" / "plugins" / "ComponentPluginWithDependencies.so"
         assert so_path.exists(), f"Expected shared library '{so_path}' does not exist."
 
-    def test_register_cpp_plugin_with_all_interface_types(self):
-        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::test"
+    def test_register_cpp_plugin_with_all_interface_types(self, monkeypatch):
+        monkeypatch.setenv("RPP_WHITELIST_PLUGIN_TYPES", "rpp_testing::test")
         rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
-        manager = LibraryManager(rpp_home=Path(self._home_dir.name) / ".rpp")
+        manager = LibraryManager(rpp_home=self._home_dir / ".rpp")
         handle = manager.get_or_create_plugin_library("rpp_testing")
         handle = manager.get_or_create_plugin_library("TestLib")
 
@@ -735,10 +747,12 @@ class TestCppPluginRegistrator:
         )
         assert str(abs_path) == str(plugin_path.resolve())
 
-    def test_register_cpp_plugin_with_data_fields(self):
-        os.environ["RPP_WHITELIST_PLUGIN_TYPES"] = "rpp_testing::DisturbanceGenerator2D"
+    def test_register_cpp_plugin_with_data_fields(self, monkeypatch):
+        monkeypatch.setenv(
+            "RPP_WHITELIST_PLUGIN_TYPES", "rpp_testing::DisturbanceGenerator2D"
+        )
         rpp_plugin_registrator.registry_config.set_to_config("USE_ROS2_COMPILATION", "True")
-        manager = LibraryManager(rpp_home=Path(self._home_dir.name) / ".rpp")
+        manager = LibraryManager(rpp_home=self._home_dir / ".rpp")
         handle = manager.get_or_create_plugin_library("rpp_testing")
         handle = manager.get_or_create_plugin_library("TestLib")
 

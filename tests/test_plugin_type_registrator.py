@@ -23,6 +23,7 @@ class TestPluginTypeRegistrator:
 
     @pytest.fixture(autouse=True)
     def _plugin_type_registry(self, monkeypatch):
+        monkeypatch.delenv("RPP_WHITELIST_PLUGIN_TYPES", raising=False)
         import rpp_plugin_registrator.plugin_descriptors.capnp
         monkeypatch.setattr(
             rpp_plugin_registrator.plugin_descriptors.capnp,

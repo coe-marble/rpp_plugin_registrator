@@ -53,6 +53,8 @@ jobs:
           python -m pip install -e "rpp_dev/src/rpp_plugin_registrator[test]"
       - name: Build the C++ runtime
         run: |
+          export RPP_HOME="$PWD/.rpp"
+          echo "RPP_HOME=$RPP_HOME" >> "$GITHUB_ENV"
           source /opt/ros/lyrical/setup.bash
           colcon build --base-paths rpp_dev/src/rpp_cpp --symlink-install --cmake-args -DBUILD_TESTING=OFF -DPython3_EXECUTABLE=/usr/bin/python3
           rpp registry config set RPP_CPP_CORE_PATH "$PWD/build/rpp_cpp"
