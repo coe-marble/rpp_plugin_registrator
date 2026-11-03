@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
-from contextlib import contextmanager
 from typing import Any, Union
 import json5
 import os, sys
@@ -10,6 +8,7 @@ import shutil
 import warnings
 from pathlib import Path
 from dataclasses import dataclass
+from rpp_common.helpers import restore_on_failure
 import rpp_plugin_registrator.registry_config as rp
 from rpp_plugin_registrator import plugin_type_registrator as ptyp_reg_api
 from rpp_plugin_registrator import plugin_registrator as p_reg_api
@@ -44,67 +43,6 @@ from rpp_plugin_registrator.payload_builders import (
 class LibraryHandle:
     path: Path
     name: str
-
-
-@contextmanager
-def _restore_on_registration_failure(files=(), trees=()):
-    """Restore scoped metadata after an exception, retaining the original error."""
-    paths = {Path(path) for path in files}
-    trees = [Path(path) for path in trees]
-    existing_directories = set()
-    for tree in trees:
-        if tree.exists():
-            existing_directories.add(tree)
-            for path in tree.rglob("*"):
-                if path.is_dir():
-                    existing_directories.add(path)
-                elif path.is_file():
-                    paths.add(path)
-    originals = {path: path.read_bytes() if path.exists() else None for path in paths}
-    missing_directories = set()
-    for path in [*paths, *trees]:
-        parent = path.parent
-        while not parent.exists():
-            missing_directories.add(parent)
-            parent = parent.parent
-
-    try:
-        yield
-    except Exception:
-        directories = set(missing_directories)
-        for tree in trees:
-            try:
-                if tree.exists():
-                    if tree not in existing_directories:
-                        directories.add(tree)
-                    for path in tree.rglob("*"):
-                        if path.is_dir():
-                            if path not in existing_directories:
-                                directories.add(path)
-                        elif path.is_file():
-                            paths.add(path)
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "Could not inspect registration directory during rollback: %s", tree)
-        for path in paths:
-            try:
-                original = originals.get(path)
-                if original is None:
-                    path.unlink(missing_ok=True)
-                elif not path.exists() or path.read_bytes() != original:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(original)
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "Could not roll back registration file %s", path)
-        for directory in sorted(directories, key=lambda path: len(path.parts), reverse=True):
-            try:
-                if directory.exists():
-                    directory.rmdir()
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "Could not remove registration directory %s", directory)
-        raise
 
 
 class LibraryManager:
@@ -571,7 +509,7 @@ class LibraryManager:
                 raise FileExistsError(f"Library '{lib_path.name}' already exists in registry")
 
         metadata_root = self._manifest_path(lib_path.name).parent
-        with _restore_on_registration_failure(
+        with restore_on_failure(
                 files=[rp.get_app_registry_json_path(), *([json_path] if link_register else [])],
                 trees=[metadata_root, *([] if link_register else [dest_path])]):
             if link_register:
@@ -705,7 +643,7 @@ class LibraryManager:
                 rp.get_app_registry_plugin_json_path(plugin_info['PluginName']),
                 self._manifest_path(lib_name),
             ])
-        with _restore_on_registration_failure(files=metadata_files):
+        with restore_on_failure(files=metadata_files):
             if append_to_json:
                 plugins_file = self._plugins_path(lib_path)
                 plugins_data = load_json5(Path(plugins_file))
