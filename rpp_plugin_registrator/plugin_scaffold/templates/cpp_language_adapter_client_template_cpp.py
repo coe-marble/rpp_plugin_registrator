@@ -98,9 +98,7 @@ public:
         return info_;
     }
 
-    void initialize(const rpp::ComponentContext& /*context */) override {
-        // Initialization logic if needed
-    }
+$lifecycle_callbacks
 
     void reset() override {
         // Reset logic if needed

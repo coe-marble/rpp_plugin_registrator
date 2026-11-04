@@ -59,6 +59,8 @@ class FieldInfo:
 class InterfaceInfo:
     name: str
     methods: List[MethodInfo]
+    lifecycle_state: Optional[TypeInfo] = None
+    lifecycle_state_schema_id: Optional[int] = None
 
 @dataclass(frozen=True)
 class StructInfo:

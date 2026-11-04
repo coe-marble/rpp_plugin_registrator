@@ -291,6 +291,16 @@ def generate_plugin_adapter_client(
     methods_str, type_aliases, imports = \
         create_adapter_client_methods_string_with_type_alisases_and_imports(
             description, imports)
+    state = description.info.get("LifecycleState")
+    activation_argument = ""
+    deactivation_type = "CallbackResult"
+    failure = 'CallbackResult.failure("Remote lifecycle control is not supported yet")'
+    deactivation_result = failure
+    if state is not None:
+        state_name = parse_field_type(state, lib_name, imports)
+        activation_argument = f", state: {state_name} | None = None"
+        deactivation_type = f"DeactivationResult[{state_name}]"
+        deactivation_result = f"DeactivationResult({failure})"
     type_aliases_str = "\n    ".join(type_aliases) if type_aliases else ""
     file_name = Path(f"{description.info['SourceFile']}").name
     imports_str = "\n".join(imports)
@@ -305,6 +315,7 @@ from rpp_py.adapter_info import AdapterClientParams, AdapterClientInfo
 from rpp_py.logger import RppLogger
 from rpp_plugin_types.{lib_name}.{class_name} import {class_name}
 from rpp_py.plugin_runtime import RuntimeConstants
+from rpp_common.lifecycle import CallbackResult, DeactivationResult
 import asyncio
 {imports_str}
 
@@ -321,6 +332,18 @@ def _to_capnp_value(value):
 
 class {class_name}_AdapterClient({class_name}):
     {type_aliases_str}
+
+    def on_configure(self, context) -> CallbackResult:
+        return {failure}
+
+    def on_cleanup(self) -> CallbackResult:
+        return {failure}
+
+    def on_activate(self{activation_argument}) -> CallbackResult:
+        return {failure}
+
+    def on_deactivate(self) -> {deactivation_type}:
+        return {deactivation_result}
 
     def __init__(self, logger: RppLogger | None = None):
         self._adapter_client_params: AdapterClientParams = None
@@ -524,9 +547,6 @@ class {class_name}_AdapterServer(capnp_schema.get_server_class("{plugin_type_nam
     def get_info_adapter_server__(self) -> AdapterServerInfo:
         return self._adapter_server_info
 
-    def initialize(self, context: ComponentContext):
-        pass
-
     {methods_str}
 '''
 
@@ -542,12 +562,26 @@ def generate_plugin_class(description: PluginTypeInfo, output_path: Path) -> Non
     imports = []
     methods_str, type_aliases, imports = \
         create_plugin_methods_string_with_type_alisases_and_imports(description, imports)
+    lifecycle_methods = ""
+    state = description.info.get("LifecycleState")
+    if state is not None:
+        state_name = parse_field_type(state, description.info["Library"], imports)
+        lifecycle_methods = f'''
+    HANDOVER_STATE_TYPE = {state_name}
+
+    def on_activate(self, state: {state_name} | None = None) -> CallbackResult:
+        raise NotImplementedError("Implement activation for this stateful plugin type.")
+
+    def on_deactivate(self) -> DeactivationResult[{state_name}]:
+        raise NotImplementedError("Implement deactivation for this stateful plugin type.")
+'''
     type_aliases_str = "\n    ".join(type_aliases) if type_aliases else ""
     imports_str = "\n".join(imports)
     content = f'''
 from typing import List, Dict, Any, Tuple
 from rpp_py.plugin import Plugin
 from rpp_py.context import ComponentContext
+from rpp_common.lifecycle import CallbackResult, DeactivationResult
 {imports_str}
 
 class {class_name}(Plugin):
@@ -555,9 +589,10 @@ class {class_name}(Plugin):
     {type_aliases_str}
 
     {methods_str}
+{lifecycle_methods}
 
-    def initialize(self, context: ComponentContext):
-        raise NotImplementedError("This method should be implemented in the plugin class.")
+    def on_configure(self, context: ComponentContext) -> CallbackResult:
+        return CallbackResult()
 '''
 
     lib_name = description.info["Library"]

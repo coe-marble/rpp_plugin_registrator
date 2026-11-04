@@ -81,13 +81,19 @@ def build_plugin_type_info_payload(
     interface_desc: InterfaceInfo,
     source_file: Path,
 ) -> Dict[str, Any]:
-    return {
+    payload = {
         "Name": plugin_desc.plugin_name,
         "SourceFile": str(source_file.resolve()),
         "ClassName": plugin_desc.interface_name,
         "SourceLanguage": plugin_desc.type,
         "Methods": [method.as_dict() for method in interface_desc.methods],
     }
+    if interface_desc.lifecycle_state is not None:
+        payload["LifecycleState"] = {
+            **interface_desc.lifecycle_state.as_dict(),
+            "SchemaId": hex(interface_desc.lifecycle_state_schema_id),
+        }
+    return payload
 
 def build_library_manifest_plugin_type_entry(
     plugin: Dict[str, Any]

@@ -162,6 +162,15 @@ python3 rpp_registrator.py generate-interface \
 
 ## Notes
 
+- Plugin types may bind a local, non-generic state struct with
+  `$Anot.lifecycleState("Estimate")`. Native Python callbacks receive the
+  generated dataclass; C++ uses the generated owning `Estimate_Native` value
+  through `LifecyclePlugin<State>`. Without the annotation, activation and
+  deactivation callbacks take no state argument.
+- Generated adapter clients are concrete for both stateful and stateless types.
+  Their lifecycle callbacks report unsupported remote control until lifecycle
+  RPC is implemented; ordinary domain-method RPC remains available. Regenerate
+  adapters and rebuild C++ artifacts with the matching runtime.
 - C++ extraction is heuristic and expects plugins similar to `rpp::Plugin` implementations in `rpp_core`.
 - Python extraction expects a class deriving from `Plugin`.
 - The registry file is upsert-based: registering the same `plugin.id` replaces the previous entry.
