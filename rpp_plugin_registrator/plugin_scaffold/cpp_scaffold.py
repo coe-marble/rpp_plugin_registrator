@@ -266,6 +266,16 @@ def generate_plugin_type_hpp(description: PluginTypeInfo, output_path: Path) -> 
     lib_name = description.info["Library"]
     methods_string, type_aliases, include_types = \
         generate_type_aliases_and_methods_for_plugin_hpp(description.info["Methods"], lib_name)
+    state = description.info.get("LifecycleState")
+    lifecycle_type = "void"
+    lifecycle_alias = ""
+    if state is not None:
+        state_name = state["Name"]
+        lifecycle_type = f"rpp_schema::{lib_name}::{state_name}_Native"
+        lifecycle_alias = f"    using LifecycleState = {lifecycle_type};"
+        state_include = f'#include "rpp_schema/{lib_name}/{state_name}.hpp"'
+        if state_include not in include_types.splitlines():
+            include_types += "\n" + state_include
 
     content = f'''#pragma once
 #include <string>
@@ -285,7 +295,7 @@ namespace hidden {{
     class {class_name}_Adapter_Server;
 }}
 
-class {class_name} : public rpp::Plugin {{
+class {class_name} : public rpp::LifecyclePlugin<{lifecycle_type}> {{
 
 
 public:
@@ -294,6 +304,7 @@ public:
 
     using AdapterClient = hidden::{class_name}_Adapter_Client;
     using AdapterServer = hidden::{class_name}_Adapter_Server;
+{lifecycle_alias}
 
 {type_aliases}
 
@@ -322,6 +333,28 @@ def generate_plugin_type_foreign_language_adapter_client_hpp(description: Plugin
     lib_name = description.info["Library"]
 
     methods_string = generate_methods_for_foreign_language_adapter_client(description.info["Methods"])
+    stateful = description.info.get("LifecycleState") is not None
+    activation_argument = "const std::optional<LifecycleState> &" if stateful else ""
+    deactivation_type = "rpp::DeactivationResult<LifecycleState>" if stateful else "rpp::CallbackResult"
+    failure = 'rpp::CallbackResult::failure("Remote lifecycle control is not supported yet")'
+    deactivation_result = "{" + failure + ", std::nullopt}" if stateful else failure
+    lifecycle_callbacks = f'''
+    rpp::CallbackResult on_configure(const rpp::ComponentContext &) override {{
+        return {failure};
+    }}
+
+    rpp::CallbackResult on_cleanup() override {{
+        return {failure};
+    }}
+
+    rpp::CallbackResult on_activate({activation_argument}) override {{
+        return {failure};
+    }}
+
+    {deactivation_type} on_deactivate() override {{
+        return {deactivation_result};
+    }}
+'''
 
     content = _render_template(
         client_template.SOURCE_CONTENT,
@@ -330,6 +363,7 @@ def generate_plugin_type_foreign_language_adapter_client_hpp(description: Plugin
         plugin_type_name=plugin_type_name,
         generated_h=Path(description.register_data.registry_plugin_type_file).name + ".h",
         methods_string=methods_string,
+        lifecycle_callbacks=lifecycle_callbacks,
     )
 
     if output_path.is_dir():

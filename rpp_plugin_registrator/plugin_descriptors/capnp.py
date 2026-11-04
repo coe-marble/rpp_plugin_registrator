@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re, secrets
+from dataclasses import replace
 from pathlib import Path
 import subprocess
 from typing import Any, Dict, Optional, Tuple
@@ -23,6 +24,27 @@ from .core import (
 )
 
 PLUGIN_ANNOTATION_ID = "0xabcd000000000000"
+LIFECYCLE_STATE_ANNOTATION_ID = "0xabcde00000000000"
+
+
+def bind_lifecycle_state(interface, node, loaded):
+    """Resolve an optional local struct binding without guessing type names."""
+    bindings = [annotation.value.text for annotation in node.annotations
+                if hex(annotation.id) == LIFECYCLE_STATE_ANNOTATION_ID]
+    if not bindings:
+        return interface
+    name = bindings[0]
+    state = getattr(loaded, name, None) if name.isidentifier() else None
+    schema = getattr(state, "schema", None)
+    if len(bindings) != 1 or schema is None or schema.node.which() != "struct" \
+            or schema.node.isGeneric \
+            or schema.node.displayName.split(":")[0] != node.displayName.split(":")[0]:
+        raise ValueError(
+            f"Interface {interface.name}: lifecycleState must name one non-generic "
+            f"struct in the same schema file; got {name!r}")
+    return replace(interface, lifecycle_state=TypeInfo(
+        name=name, kind="struct", capnp_type_display_name=schema.node.displayName),
+        lifecycle_state_schema_id=schema.node.id)
 
 def overwrite_capnp_schema_id(source_text: str) -> str:
     schema_id = secrets.randbits(64) | (1 << 63)
@@ -226,7 +248,9 @@ def parse_capnp_plugin(source_file: Path,
         plugin_id: Optional[str], relative_to_source: bool) -> ParsePluginTypeResult:
     try:
         parser, loaded = load_capnp_schema_from_file(source_file,
-                relative_to_source, with_random_schema_id=True,
+                # Each parse owns its SchemaParser, so stable IDs cannot collide
+                # with previous parses and can identify the handover schema.
+                relative_to_source, with_random_schema_id=False,
                 use_global_parser=False)
     except subprocess.CalledProcessError as e:
         return ParsePluginTypeResult(
@@ -269,6 +293,7 @@ def parse_capnp_plugin(source_file: Path,
                 # build interface description
                 server_instance = member_field.Server()
                 iface_desc = build_interface_description(server_instance, node, parser, dependencies)
+                iface_desc = bind_lifecycle_state(iface_desc, node, loaded)
                 interfaces[iface_desc.name] = iface_desc
                 is_plugin, plugin_name = check_if_capnp_type_is_plugin(member_field)
                 if is_plugin:
@@ -279,6 +304,8 @@ def parse_capnp_plugin(source_file: Path,
                     ))
         except capnp.KjException:
             pass
+        except ValueError as error:
+            return ParsePluginTypeResult(is_valid=False, message=str(error), data=None)
 
     return ParsePluginTypeResult(
         is_valid=True,
