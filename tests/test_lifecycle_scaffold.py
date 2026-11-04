@@ -102,7 +102,7 @@ def test_generated_python_callbacks_and_dispatch(schema, tmp_path, monkeypatch, 
         assert base().cleanup().success
         assert list(inspect.signature(base.on_activate).parameters) == (
             ["self", "state"] if stateful else ["self"])
-        from rpp_common.lifecycle import CallbackResult, DeactivationResult
+        from rpp_py.lifecycle import CallbackResult, DeactivationResult
         if stateful:
             from rpp_schema.lifecycle_fixture.Estimate import Estimate
 
@@ -136,7 +136,7 @@ def test_generated_python_callbacks_and_dispatch(schema, tmp_path, monkeypatch, 
         adapter_module = importlib.util.module_from_spec(adapter_spec)
         adapter_spec.loader.exec_module(adapter_module)
         adapter = adapter_module.Localizer_AdapterClient()
-        from rpp_common.lifecycle import LifecycleError
+        from rpp_py.lifecycle import LifecycleError
         for operation, args in (("configure", (object(),)), ("activate_state", ()),
                                 ("deactivate_state", ()), ("cleanup", ())):
             with pytest.raises(LifecycleError, match="Remote lifecycle"):

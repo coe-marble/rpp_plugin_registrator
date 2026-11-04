@@ -190,11 +190,19 @@ def create_plugin_methods_string_with_type_alisases_and_imports(
     methods_str = ""
     methods = description.get_interface().methods if description.get_interface() else []
     for method in methods:
-        prototype, _ = create_method_prototype_string(method,
+        prototype, params_call = create_method_prototype_string(method,
                 description.info["Library"], type_aliases, imports)
+        async_prototype = prototype.replace(f"def {method.name}", f"async def {method.name}_async", 1)
+        call_arguments = f"{params_call}, **kwargs" if params_call else "**kwargs"
         methods_str += f'''
     {prototype}:
         raise NotImplementedError("This method should be implemented in the plugin class.")
+
+    {async_prototype}:
+        result = self.{method.name}({call_arguments})
+        if inspect.isawaitable(result):
+            return await result
+        return result
 '''
     return methods_str, type_aliases, imports
 
@@ -253,6 +261,8 @@ def create_adapter_client_methods_string_with_type_alisases_and_imports(
         methods_str += f'''
     {prototype}:
         if self._component_call_executor is None:
+            if self._caller_loop is not None:
+                raise RuntimeError("Use {method.name}_async for a client owned by an asyncio loop.")
             raise RuntimeError(
                 "Client is not connected. Call connect_adapter_client__() first.")
         return self._component_call_executor.call(
@@ -260,6 +270,10 @@ def create_adapter_client_methods_string_with_type_alisases_and_imports(
 
     async {public_async_prototype}:
         if self._component_call_executor is None:
+            if self._caller_loop is not None:
+                if asyncio.get_running_loop() is not self._caller_loop:
+                    raise RuntimeError("Use the asyncio loop that owns this component client.")
+                return await self._{method.name}_on_executor__({params_call})
             raise RuntimeError(
                 "Client is not connected. Call connect_adapter_client__() first.")
         return await asyncio.wrap_future(
@@ -315,7 +329,7 @@ from rpp_py.adapter_info import AdapterClientParams, AdapterClientInfo
 from rpp_py.logger import RppLogger
 from rpp_plugin_types.{lib_name}.{class_name} import {class_name}
 from rpp_py.plugin_runtime import RuntimeConstants
-from rpp_common.lifecycle import CallbackResult, DeactivationResult
+from rpp_py.lifecycle import CallbackResult, DeactivationResult
 import asyncio
 {imports_str}
 
@@ -354,6 +368,7 @@ class {class_name}_AdapterClient({class_name}):
         self._owned_component_call_executor = None
         self._runtime_client_context = None
         self._owns_runtime_client_context = False
+        self._caller_loop = None
 
     def configure_adapter_client__(self, adapter_client_params: AdapterClientParams):
         self._adapter_client_params = adapter_client_params
@@ -402,6 +417,27 @@ class {class_name}_AdapterClient({class_name}):
             context, executor, False, None)
         return await self._connect_adapter_client_on_executor__()
 
+    async def connect_adapter_client_async(self, context: RppRuntimeClientContext):
+        if self._adapter_client_params is None:
+            raise RuntimeError("Configure adapter client parameters before connecting.")
+        self._configure_adapter_client_connection__(context, None, not context.is_started, None)
+        self._caller_loop = asyncio.get_running_loop()
+        try:
+            return await self._connect_adapter_client_on_executor__()
+        except Exception:
+            try:
+                await self._disconnect_adapter_client_on_executor__()
+            except Exception as error:
+                self._logger.error(f"Async component connection rollback failed: {{error!r}}")
+            raise
+
+    async def disconnect_adapter_client_async(self):
+        if self._caller_loop is None:
+            raise RuntimeError("This component client is not owned by the calling asyncio loop.")
+        if asyncio.get_running_loop() is not self._caller_loop:
+            raise RuntimeError("Use the asyncio loop that owns this component client.")
+        await self._disconnect_adapter_client_on_executor__()
+
     def _configure_adapter_client_connection__(
             self, context: RppRuntimeClientContext, executor,
             owns_runtime_client_context: bool, owned_executor):
@@ -409,6 +445,7 @@ class {class_name}_AdapterClient({class_name}):
         self._component_call_executor = executor
         self._owns_runtime_client_context = owns_runtime_client_context
         self._owned_component_call_executor = owned_executor
+        self._caller_loop = None
 
     async def _connect_adapter_client_on_executor__(self):
         if self._owns_runtime_client_context:
@@ -431,6 +468,8 @@ class {class_name}_AdapterClient({class_name}):
             return True
 
     def disconnect_adapter_client__(self):
+        if self._caller_loop is not None:
+            raise RuntimeError("Use disconnect_adapter_client_async for an asyncio-owned client.")
         executor = self._component_call_executor
         if executor is None:
             return
@@ -452,6 +491,7 @@ class {class_name}_AdapterClient({class_name}):
         self._runtime_client_context = None
         self._owns_runtime_client_context = False
         self._owned_component_call_executor = None
+        self._caller_loop = None
 
     {methods_str}
 '''
@@ -581,7 +621,8 @@ def generate_plugin_class(description: PluginTypeInfo, output_path: Path) -> Non
 from typing import List, Dict, Any, Tuple
 from rpp_py.plugin import Plugin
 from rpp_py.context import ComponentContext
-from rpp_common.lifecycle import CallbackResult, DeactivationResult
+from rpp_py.lifecycle import CallbackResult, DeactivationResult
+import inspect
 {imports_str}
 
 class {class_name}(Plugin):

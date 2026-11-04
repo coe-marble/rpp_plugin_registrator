@@ -74,7 +74,7 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> ParsePlu
 
     is_casadi = False
     for item in plugin_class.body:
-        if not isinstance(item, ast.FunctionDef):
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         if item.name.startswith("_") or item.name.endswith("_"):
             continue
