@@ -98,6 +98,8 @@ public:
         return info_;
     }
 
+$lifecycle_state_codec
+
 $lifecycle_callbacks
 
     void reset() override {

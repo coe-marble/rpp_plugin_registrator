@@ -94,21 +94,22 @@ def get_cpp_shared_libraries_path(
     return dest_path
 
 
-def get_rpp_cpp_core_shared_library_path() -> Tuple[str, str]:
-    """Get the path to the shared libraries for the rpp_cpp_core library."""
+def get_rpp_cpp_shared_libraries() -> Tuple[str, List[str]]:
+    """Locate context/slot runtime and logger/clock libraries for generated components."""
+    libraries = ["rpp_cpp", "rpp_cpp_core"]
     rpp_cpp_core_path = (
         os.environ.get("RPP_CPP_CORE_PATH")
         or get_setting("RPP_CPP_CORE_PATH")
     )
     if rpp_cpp_core_path is not None:
-        return rpp_cpp_core_path, "rpp_cpp_core"
+        return rpp_cpp_core_path, libraries
     elif get_setting("USE_ROS2_COMPILATION"):
         from ament_index_python.packages import (
             get_package_share_directory,
         )
         rclpy_info = get_package_share_directory("rpp_cpp")
         rpp_cpp_core_path = Path(rclpy_info).parent.parent / "lib"
-        return str(rpp_cpp_core_path), "rpp_cpp_core"
+        return str(rpp_cpp_core_path), libraries
     else:
         raise ValueError("RPP_CPP_CORE_PATH environment variable is not set and USE_ROS2_COMPILATION is not set.")
 
@@ -239,11 +240,11 @@ def get_cpp_imports_and_libraries_for_library(
                     + f" version does not satisfy the requirement '{dep_operator}{dep_version}'.")
             dependency_infos.append(info)
 
-    rpp_cpp_core_path, rpp_cpp_liked_name = \
-        get_rpp_cpp_core_shared_library_path()
+    rpp_cpp_core_path, runtime_libraries = \
+        get_rpp_cpp_shared_libraries()
     merged_includes = []
     merged_lib_dirs = [rpp_cpp_core_path]
-    merged_libs_to_link = [rpp_cpp_liked_name]
+    merged_libs_to_link = list(runtime_libraries)
     for info in dependency_infos:
         for inc in info.get("IncludeDirs", []):
             if inc not in merged_includes:

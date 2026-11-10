@@ -153,7 +153,7 @@ def test_generated_cpp_uses_lifecycle_base(schema, tmp_path, stateful):
     output = tmp_path / "Localizer.hpp"
     generate_plugin_type_hpp(desc, output)
     # Isolate the generated base from runtime/adapters: this test verifies that
-    # users can override its native callback signatures in real C++.
+    # users can override its generated reader callback signatures in real C++.
     support = tmp_path / "rpp_cpp"
     support.mkdir()
     runtime_header = Path(__file__).resolve().parents[2] / "rpp_cpp/include/rpp_cpp/plugin_def.hpp"
@@ -164,9 +164,17 @@ def test_generated_cpp_uses_lifecycle_base(schema, tmp_path, stateful):
     if stateful:
         state_header = tmp_path / "rpp_schema/lifecycle_fixture/Estimate.hpp"
         state_header.parent.mkdir(parents=True)
-        state_header.write_text('''#include <vector>
+        state_header.write_text('''#include <utility>
 namespace rpp_schema::lifecycle_fixture {
-struct Estimate_Native {std::vector<double> position;};
+struct Estimate {
+    struct Const {
+        Const() = default;
+        Const(Const &&) = default;
+        Const & operator=(Const &&) = default;
+        Const(const Const &) = delete;
+        Const & operator=(const Const &) = delete;
+    };
+};
 }
 ''')
         callbacks = '''
@@ -203,7 +211,7 @@ def test_real_cpp_adapters_compile_and_reject_unsupported_lifecycle(
     from rpp_plugin_registrator import registry_config as rp
     from rpp_plugin_registrator.plugin_registrator.capnp import register_capnp_plugin_type
     from rpp_plugin_registrator.plugin_registrator.cpp_helpers import (
-        RPP_CPP_PATH, get_cpp_imports_for_rpp, get_rpp_cpp_core_shared_library_path,
+        RPP_CPP_PATH, get_cpp_imports_for_rpp, get_rpp_cpp_shared_libraries,
     )
     from rpp_plugin_registrator.plugin_scaffold.cpp_scaffold import scaffold_cpp
     from rpp_plugin_registrator.plugin_scaffold.scaffold_capnp_stubs import scaffold_capnp_stubs
@@ -228,30 +236,31 @@ def test_real_cpp_adapters_compile_and_reject_unsupported_lifecycle(
     source.write_text('''#include <rpp_plugin_types/lifecycle_fixture/Localizer.hpp>
 #include <type_traits>
 namespace rpp {
-class ComponentContextAccess {
+class ComponentRuntimeAccess {
 public:
-    static ComponentContext make() {return ComponentContext(std::shared_ptr<RppLogger>{});}
+    static ComponentRuntime make() {return ComponentRuntime(ComponentRuntime::ScriptComponentSlots{}, ClockOptions{});}
+    static const ComponentContext & view(const ComponentRuntime & runtime) {return *runtime.context_view();}
 };
 }
 using Client = lifecycle_fixture::hidden::Localizer_Adapter_Client;
 static_assert(!std::is_abstract_v<Client>);
 int main() {
     Client client;
-    auto context = rpp::ComponentContextAccess::make();
-    if (client.configure(context).success || client.cleanup().success) {return 1;}
+    auto runtime = rpp::ComponentRuntimeAccess::make();
+    if (client.configure(rpp::ComponentRuntimeAccess::view(runtime)).success || client.cleanup().success) {return 1;}
     if (client.activate_state().success) {return 2;}
     auto stopped = client.deactivate_state();
     if (stopped.result.success || stopped.state.has_value()) {return 3;}
     return 0;
 }
 ''')
-    core_path, core_library = get_rpp_cpp_core_shared_library_path()
+    core_path, runtime_libraries = get_rpp_cpp_shared_libraries()
     executable = tmp_path / "adapter"
     sources = [*sorted((output / "cpp/capnp_gen").rglob("*.c++")),
                RPP_CPP_PATH / "src/plugin_runtime.capnp.c++"]
     command = ["g++", "-std=c++17", str(source), *(str(path) for path in sources),
                *(f"-I{path}" for path in get_cpp_imports_for_rpp()),
-               f"-L{core_path}", f"-l{core_library}", f"-Wl,-rpath,{core_path}",
+               f"-L{core_path}", *(f"-l{library}" for library in runtime_libraries), f"-Wl,-rpath,{core_path}",
                "-lcapnp-rpc", "-lcapnp", "-lkj-async", "-lkj", "-pthread",
                "-o", str(executable)]
     compiled = subprocess.run(command, capture_output=True, text=True)

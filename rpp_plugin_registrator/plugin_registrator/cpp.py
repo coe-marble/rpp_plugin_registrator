@@ -28,7 +28,7 @@ from .cpp_helpers import (
     get_plugin_type_shared_library_path,
     get_plugin_type_shared_library_flags,
     get_cpp_shared_libraries_path,
-    get_rpp_cpp_core_shared_library_path,
+    get_rpp_cpp_shared_libraries,
     get_tmp_dir_for_compilation,
     register_cpp_plugin_source,
     register_cpp_plugin_type_source
@@ -114,10 +114,10 @@ def compile_cpp_plugin_type(source_file:str, plugin_type_info: PluginTypeInfo,
     plugin_type_library = info.get("Library")
     imports = get_cpp_imports_for_rpp()
     linked_libs = _get_common_cpp_linker_flags()
-    rpp_cpp_core_path, rpp_cpp_core_lib_name = \
-        get_rpp_cpp_core_shared_library_path()
+    rpp_cpp_core_path, runtime_libraries = \
+        get_rpp_cpp_shared_libraries()
 
-    linked_libs += [f"-L{rpp_cpp_core_path}", f"-l{rpp_cpp_core_lib_name}"]
+    linked_libs += [f"-L{rpp_cpp_core_path}", *(f"-l{library}" for library in runtime_libraries)]
 
     use_ros2 = get_setting("USE_ROS2_COMPILATION")
     if use_ros2:

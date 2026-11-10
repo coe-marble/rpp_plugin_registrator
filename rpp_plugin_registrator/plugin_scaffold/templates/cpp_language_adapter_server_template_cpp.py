@@ -89,6 +89,8 @@ public:
         return info_;
     }
 
+$lifecycle_state_codec
+
     virtual ~${class_name}_Adapter_Server() noexcept = default;
 
 ${methods_string}

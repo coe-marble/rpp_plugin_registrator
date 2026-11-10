@@ -271,7 +271,7 @@ def generate_plugin_type_hpp(description: PluginTypeInfo, output_path: Path) -> 
     lifecycle_alias = ""
     if state is not None:
         state_name = state["Name"]
-        lifecycle_type = f"rpp_schema::{lib_name}::{state_name}_Native"
+        lifecycle_type = f"rpp_schema::{lib_name}::{state_name}::Const"
         lifecycle_alias = f"    using LifecycleState = {lifecycle_type};"
         state_include = f'#include "rpp_schema/{lib_name}/{state_name}.hpp"'
         if state_include not in include_types.splitlines():
@@ -326,6 +326,49 @@ public:
     file_path.write_text(content, encoding="utf-8")
 
 
+def generate_lifecycle_state_adapter_code(description: PluginTypeInfo) -> str:
+    """Generate the adapter-only typed AnyPointer bridge for an annotated state."""
+    state = description.info.get("LifecycleState")
+    if state is None:
+        return ""
+    lib_name = description.info["Library"]
+    state_name = state["Name"]
+    schema_id = state["SchemaId"]
+    capnp_type = f"::schema::{lib_name}::{state_name}"
+    wrapper_type = f"::rpp_schema::{lib_name}::{state_name}::Const"
+    return f'''
+    rpp::CallbackResult decode_lifecycle_state__(
+        uint64_t schema_id, capnp::AnyPointer::Reader payload,
+        rpp::HandoverState & state) const override {{
+        if (schema_id == 0 && payload.isNull()) {{
+            state = rpp::HandoverState{{}};
+            return {{}};
+        }}
+        if (schema_id != static_cast<uint64_t>({schema_id})) {{
+            return rpp::CallbackResult::failure("Unexpected lifecycle state schema ID");
+        }}
+        state = rpp::HandoverState({wrapper_type}::from_wire(payload.getAs<{capnp_type}>()));
+        return {{}};
+    }}
+
+    rpp::CallbackResult encode_lifecycle_state__(
+        const rpp::HandoverState & state, uint64_t & schema_id,
+        capnp::AnyPointer::Builder payload) const override {{
+        if (!state.has_value()) {{
+            schema_id = 0;
+            (void)payload;
+            return {{}};
+        }}
+        if (!state.holds<{wrapper_type}>()) {{
+            return rpp::CallbackResult::failure("Unexpected lifecycle state type");
+        }}
+        schema_id = static_cast<uint64_t>({schema_id});
+        payload.setAs<{capnp_type}>(state.get<{wrapper_type}>());
+        return {{}};
+    }}
+'''
+
+
 def generate_plugin_type_foreign_language_adapter_client_hpp(description: PluginTypeInfo, output_path: Path) -> None:
     """Generate a C++ header file for a foreign language adapter client for a plugin type."""
     class_name = description.info["ClassName"]
@@ -333,6 +376,7 @@ def generate_plugin_type_foreign_language_adapter_client_hpp(description: Plugin
     lib_name = description.info["Library"]
 
     methods_string = generate_methods_for_foreign_language_adapter_client(description.info["Methods"])
+    lifecycle_state_codec = generate_lifecycle_state_adapter_code(description)
     stateful = description.info.get("LifecycleState") is not None
     activation_argument = "const std::optional<LifecycleState> &" if stateful else ""
     deactivation_type = "rpp::DeactivationResult<LifecycleState>" if stateful else "rpp::CallbackResult"
@@ -364,6 +408,7 @@ def generate_plugin_type_foreign_language_adapter_client_hpp(description: Plugin
         generated_h=Path(description.register_data.registry_plugin_type_file).name + ".h",
         methods_string=methods_string,
         lifecycle_callbacks=lifecycle_callbacks,
+        lifecycle_state_codec=lifecycle_state_codec,
     )
 
     if output_path.is_dir():
@@ -385,6 +430,7 @@ def generate_plugin_type_foreign_language_adapter_server_hpp(description: Plugin
         class_name,
         description.info["Methods"],
     )
+    lifecycle_state_codec = generate_lifecycle_state_adapter_code(description)
 
     content = _render_template(
         server_template.SOURCE_TEMPLATE,
@@ -393,6 +439,7 @@ def generate_plugin_type_foreign_language_adapter_server_hpp(description: Plugin
         plugin_type_name=plugin_type_name,
         generated_h=Path(description.register_data.registry_plugin_type_file).name + ".h",
         methods_string=methods_string,
+        lifecycle_state_codec=lifecycle_state_codec,
     )
 
     if output_path.is_dir():
@@ -486,6 +533,7 @@ def scaffold_structs(structs: Dict[str, StructInfo],
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
 #include <memory>
+#include <utility>
 
 {include_types_str}
 
@@ -555,6 +603,15 @@ public:
             operator schema::{lib_name}::{struct_name}::Reader() const {{ return reader_; }}
             Const shallow_copy() const {{
                 return Const(this->reader_);
+            }}
+            static Const from_wire(schema::{lib_name}::{struct_name}::Reader reader) {{
+                auto message = std::make_unique<capnp::MallocMessageBuilder>();
+                message->setRoot(reader);
+                schema::{lib_name}::{struct_name}::Reader copied_reader =
+                    message->getRoot<schema::{lib_name}::{struct_name}>();
+                Const result(copied_reader);
+                result.orphaned_msg_builder_ = std::move(message);
+                return result;
             }}
         using List = rpp::ListConst<{struct_name}>;
 '''
