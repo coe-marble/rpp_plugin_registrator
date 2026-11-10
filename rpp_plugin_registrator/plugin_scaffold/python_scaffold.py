@@ -295,6 +295,47 @@ def create_adapter_client_methods_string_with_type_alisases_and_imports(
 
     return methods_str, type_aliases, imports
 
+
+def generate_python_lifecycle_state_codec(description: PluginTypeInfo) -> str:
+    """Generate the adapter-private typed bridge for runtime state handover."""
+    state = description.info.get("LifecycleState")
+    if state is None:
+        return '''def decode_lifecycle_state__(self, schema_id, payload):
+        if schema_id:
+            return CallbackResult.failure("This plugin does not accept lifecycle state"), None
+        return CallbackResult(), None
+
+    def encode_lifecycle_state__(self, state, wire):
+        if state is not None:
+            return CallbackResult.failure("This plugin does not provide lifecycle state")
+        wire.schemaId = 0
+        return CallbackResult()'''
+
+    state_name = state["Name"]
+    schema_id = state["SchemaId"]
+    display_name = state.get("CapnpTypeDisplayName", "")
+    state_library = display_name.split("/")[0] if "/" in display_name else description.info["Library"]
+    return f'''def _lifecycle_state_schema__(self):
+        return capnp_schema.get_struct_class("{state_library}", "{state_name}")
+
+    def decode_lifecycle_state__(self, schema_id, payload):
+        if not schema_id:
+            return CallbackResult(), None
+        if int(schema_id) != int({schema_id}):
+            return CallbackResult.failure("Unexpected lifecycle state schema ID"), None
+        reader = payload.as_struct(self._lifecycle_state_schema__())
+        return CallbackResult(), {state_name}(**reader.to_dict())
+
+    def encode_lifecycle_state__(self, state, wire):
+        if state is None:
+            wire.schemaId = 0
+            return CallbackResult()
+        if not isinstance(state, {state_name}):
+            return CallbackResult.failure("Unexpected lifecycle state type")
+        wire.schemaId = int({schema_id})
+        wire.payload.as_struct(self._lifecycle_state_schema__()).from_dict(state.as_dict())
+        return CallbackResult()'''
+
 def generate_plugin_adapter_client(
         description: PluginTypeInfo, scaffolded_file_path: Path) -> None:
     """Generate a Python class for the plugin adapter client based on the description."""
@@ -315,6 +356,7 @@ def generate_plugin_adapter_client(
         activation_argument = f", state: {state_name} | None = None"
         deactivation_type = f"DeactivationResult[{state_name}]"
         deactivation_result = f"DeactivationResult({failure})"
+    lifecycle_codec = generate_python_lifecycle_state_codec(description)
     type_aliases_str = "\n    ".join(type_aliases) if type_aliases else ""
     file_name = Path(f"{description.info['SourceFile']}").name
     imports_str = "\n".join(imports)
@@ -493,6 +535,8 @@ class {class_name}_AdapterClient({class_name}):
         self._owned_component_call_executor = None
         self._caller_loop = None
 
+    {lifecycle_codec}
+
     {methods_str}
 '''
 
@@ -510,9 +554,12 @@ def generate_plugin_adapter_server(description: PluginTypeInfo, scaffolded_file_
     imports = []
     methods_str, type_aliases, imports = \
         create_adapter_server_methods_string_with_type_alisases_and_imports(description, imports)
+    if description.info.get("LifecycleState") is not None:
+        parse_field_type(description.info["LifecycleState"], lib_name, imports)
     type_aliases_str = "\n    ".join(type_aliases) if type_aliases else ""
     file_name = Path(f"{description.info['SourceFile']}").name
     imports_str = "\n".join(imports)
+    lifecycle_codec = generate_python_lifecycle_state_codec(description)
 
     content = f'''
 
@@ -526,6 +573,7 @@ from rpp_py.capnp_runtime import CapnpRuntime
 from rpp_py.context import ComponentContext
 from rpp_py.adapter_info import AdapterServerParams, AdapterServerInfo
 from rpp_py.logger import RppLogger
+from rpp_py.lifecycle import CallbackResult
 from rpp_plugin_types.{lib_name}.{class_name} import {class_name}
 
 class {class_name}_AdapterServer(capnp_schema.get_server_class("{plugin_type_name}", "{file_name}")):
@@ -586,6 +634,8 @@ class {class_name}_AdapterServer(capnp_schema.get_server_class("{plugin_type_nam
 
     def get_info_adapter_server__(self) -> AdapterServerInfo:
         return self._adapter_server_info
+
+    {lifecycle_codec}
 
     {methods_str}
 '''

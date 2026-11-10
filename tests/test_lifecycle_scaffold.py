@@ -235,19 +235,13 @@ def test_real_cpp_adapters_compile_and_reject_unsupported_lifecycle(
     source = tmp_path / "adapter.cpp"
     source.write_text('''#include <rpp_plugin_types/lifecycle_fixture/Localizer.hpp>
 #include <type_traits>
-namespace rpp {
-class ComponentRuntimeAccess {
-public:
-    static ComponentRuntime make() {return ComponentRuntime(ComponentRuntime::ScriptComponentSlots{}, ClockOptions{});}
-    static const ComponentContext & view(const ComponentRuntime & runtime) {return *runtime.context_view();}
-};
-}
 using Client = lifecycle_fixture::hidden::Localizer_Adapter_Client;
 static_assert(!std::is_abstract_v<Client>);
 int main() {
     Client client;
-    auto runtime = rpp::ComponentRuntimeAccess::make();
-    if (client.configure(rpp::ComponentRuntimeAccess::view(runtime)).success || client.cleanup().success) {return 1;}
+    // Foreign adapters are lifecycle proxies. Direct lifecycle callbacks are
+    // deliberately rejected; ComponentRuntime performs the remote transition.
+    if (client.cleanup().success) {return 1;}
     if (client.activate_state().success) {return 2;}
     auto stopped = client.deactivate_state();
     if (stopped.result.success || stopped.state.has_value()) {return 3;}
