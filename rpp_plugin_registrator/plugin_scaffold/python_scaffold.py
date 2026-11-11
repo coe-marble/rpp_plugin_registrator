@@ -497,17 +497,16 @@ class {class_name}_AdapterClient({class_name}):
         self._runtime = self._runtime_client_context.get_runtime()
 
         runtime_class = RuntimeConstants.get_capnp_schema().PluginRuntime
-        try:
-            self._runtime_client = self._runtime_client_context.get_client().cast_as(runtime_class)
-            capability = await self._runtime_client.getComponentCapability(
-                self._adapter_client_info.connection_name)
-            interface_class = capnp_schema.get_client_class("{plugin_type_name}", "{file_name}")
-            self._client = capability.pluginRef.as_interface(interface_class)
-            return True
-        except Exception as e:
-            client_class = capnp_schema.get_client_class("{plugin_type_name}", "{file_name}")
-            self._client = self._runtime_client_context.get_client().cast_as(client_class)
-            return True
+        self._runtime_client = self._runtime_client_context.get_client().cast_as(runtime_class)
+        capability = await self._runtime_client.getComponentCapability(
+            self._adapter_client_info.connection_name)
+        interface_class = capnp_schema.get_client_class("{plugin_type_name}", "{file_name}")
+        # Cap'n Proto represents an ``AnyPointer`` capability result as a
+        # dynamic object reader. Convert that reader to the concrete
+        # interface first; ``cast_as()`` is only available once it is a
+        # capability client.
+        self._client = capability.pluginRef.as_interface(interface_class)
+        return True
 
     def disconnect_adapter_client__(self):
         if self._caller_loop is not None:
