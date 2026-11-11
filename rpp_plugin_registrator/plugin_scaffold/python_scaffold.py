@@ -606,7 +606,7 @@ class {class_name}_AdapterServer(capnp_schema.get_server_class("{plugin_type_nam
             self._logger = RppLogger(self._adapter_server_info.name)
 
     def create_capability_adapter_server__(self):
-        return capnp_schema.get_server_class("{plugin_type_name}", "{file_name}")
+        return self
 
     async def handle_connection_adapter_server__(self, stream):
         self._rpc_server = capnp.TwoPartyServer(stream, bootstrap=self)
