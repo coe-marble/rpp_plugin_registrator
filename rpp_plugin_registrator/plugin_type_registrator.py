@@ -26,15 +26,18 @@ from .registry_config import (
     LIBRARY_PLUGINS_FILENAME,
     LIBRARY_PLUGIN_TYPES_KEY,
     LIBRARY_PLUGINS_KEY,
+    LIBRARY_REGISTRATOR_VERSION_KEY,
 )
 from .payload_builders import (
     build_initialization_payload,
     build_library_manifest,
+    build_library_manifest_plugin_type_entry,
     build_library_package,
     build_plugin_type_info_payload,
     build_registry_payload,
     build_registry_plugin_type_entry,
 )
+from .registrator_version import current_registrator_version
 
 SCAFFOLD_LANGUAGES = ["all"]
 
@@ -190,6 +193,22 @@ def ensure_rpp_layout(
         common_plugins_dir,
         init_anot_only=init_anot_only,
         override=override_initialization)
+
+    # Complete library registration before marking initialization successful,
+    # including when called directly by the init-home CLI.
+    manifests = {}
+    for plugin_type in initialized_plugins:
+        library_name = plugin_type["Library"]
+        if library_name not in manifests:
+            manifests[library_name] = load_json(
+                rp.get_app_library_manifest_path_json(library_name))
+        manifests[library_name].setdefault(LIBRARY_PLUGIN_TYPES_KEY, {})[
+            plugin_type["PluginTypeName"]
+        ] = build_library_manifest_plugin_type_entry(plugin_type)
+    for library_name, manifest in manifests.items():
+        manifest[LIBRARY_REGISTRATOR_VERSION_KEY] = current_registrator_version()
+        write_json(rp.get_app_library_manifest_path_json(library_name),
+            manifest, indent=4, sort_keys=False)
 
     plugins_list_str = [plugin["PluginTypeName"] for plugin in initialized_plugins]
     init_payload = build_initialization_payload(rp.SCHEMA_VERSION, plugins_list_str)

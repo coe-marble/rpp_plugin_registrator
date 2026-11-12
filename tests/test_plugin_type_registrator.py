@@ -8,6 +8,7 @@ import subprocess
 import pytest
 
 from rpp_plugin_registrator.library_manager import LibraryManager
+from rpp_plugin_registrator.library_registration_status import compute_library_registration_status
 from rpp_plugin_registrator.plugin_registrator.cpp import get_tmp_dir_for_compilation
 import rpp_plugin_registrator.plugin_type_registrator as registry_api
 from rpp_plugin_registrator import registry_config as rp
@@ -143,7 +144,11 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
                 assert paths["registry"].parent.exists()
                 assert (paths["home"] / registry_api.rp.INITIALIZED_MARKER_FILENAME).exists()
 
-    def test_ensure_rpp_layout_initializes_common_plugins_and_writes_marker(self):
+    def test_ensure_rpp_layout_initializes_common_plugins_and_writes_marker(self, monkeypatch):
+        monkeypatch.setattr(registry_api, "current_registrator_version", lambda: "0.2.0")
+        monkeypatch.setattr(
+            "rpp_plugin_registrator.library_registration_status.current_registrator_version",
+            lambda: "0.2.0")
         with tempfile.TemporaryDirectory() as td:
             temp_root = Path(td)
             common_plugins_dir = temp_root / "common_plugins"
@@ -177,10 +182,47 @@ interface {class_name} $Anot.plugin("{plugin_name}"){{
                 assert manifest_path.exists()
                 manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
                 assert manifest_payload["Library"] == "common_plugins"
+                assert manifest_payload[rp.LIBRARY_REGISTRATOR_VERSION_KEY] == "0.2.0"
+                assert set(manifest_payload["PluginTypes"]) == {
+                    "common_plugins::Controller", "common_plugins::Estimator"}
+
+                # init-home initializes before a library manager is constructed.
+                # The later manager must see complete registration metadata.
+                manager = LibraryManager(source_libraries=False)
+                status = compute_library_registration_status(manager, "common_plugins")
+                assert status.registered_version == "0.2.0"
+                dependent = manager.get_or_create_plugin_library("dependent")
+                package_path = Path(dependent.path) / rp.LIBRARY_PACKAGE_FILENAME
+                package = json.loads(package_path.read_text(encoding="utf-8"))
+                package["Dependencies"] = ["common_plugins"]
+                package_path.write_text(json.dumps(package), encoding="utf-8")
+                assert compute_library_registration_status(
+                    manager, dependent.name).blocking_dependencies == []
 
                 registry_api.ensure_rpp_layout(common_plugins_dir=common_plugins_dir)
                 registry_payload_second = registry_api.load_registry()
                 assert sorted(registry_payload_second["PluginTypes"].keys()) == sorted(registry_payload["PluginTypes"].keys())
+
+    def test_ensure_rpp_layout_does_not_mark_success_when_manifest_write_fails(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as td:
+            temp_root = Path(td)
+            common_plugins_dir = temp_root / "common_plugins"
+            self._write_capnp_anot_source(common_plugins_dir / "anot.capnp")
+            self._write_capnp_plugin_source(
+                common_plugins_dir / "Controller.capnp", "Controller", "ctl", "controller",
+                anot_library_name="common_plugins", id="4")
+            write_json = registry_api.write_json
+
+            def fail_registration_manifest(path, payload, *args, **kwargs):
+                if rp.LIBRARY_REGISTRATOR_VERSION_KEY in payload:
+                    raise OSError("Cannot write registration manifest")
+                return write_json(path, payload, *args, **kwargs)
+
+            monkeypatch.setattr(registry_api, "write_json", fail_registration_manifest)
+            with self._temp_rpp_home(temp_root / ".rpp") as home:
+                with pytest.raises(OSError, match="Cannot write registration manifest"):
+                    registry_api.ensure_rpp_layout(common_plugins_dir=common_plugins_dir)
+                assert not (home / rp.INITIALIZED_MARKER_FILENAME).exists()
 
     def test_ensure_rpp_layout_override_reinitializes_when_marker_exists(self):
         with tempfile.TemporaryDirectory() as td:

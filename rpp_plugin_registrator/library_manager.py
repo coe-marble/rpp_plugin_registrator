@@ -173,14 +173,7 @@ class LibraryManager:
 
     def _ensure_layout(self, init_anot_only: bool = False):
         """Ensure required directory structure exists."""
-        types = ptyp_reg_api.ensure_rpp_layout(init_anot_only=init_anot_only)
-        types_by_library = {}
-        for plugin_type in types:
-            types_by_library.setdefault(plugin_type["Library"], []).append(plugin_type)
-        for library_name, library_types in types_by_library.items():
-            self.add_to_manifest(
-                lib_name=library_name, plugin_type_or_list=library_types)
-            self._record_completed_library_registration_version(library_name)
+        ptyp_reg_api.ensure_rpp_layout(init_anot_only=init_anot_only)
 
     # Library Query Methods
     def get_available_plugins(self):
