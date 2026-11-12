@@ -299,6 +299,13 @@ def register_plugin_type_from_source(source_file: Path,
     parse_result = parse_plugin_type_file(source_path, plugin_id_override=None)
     if not parse_result.is_valid:
         raise ValueError(f"Failed to parse plugin type file '{source_path}': {parse_result.message}")
+    data = parse_result.data
+    if data.source_language == "capnp" and data.interfaces and not data.plugins:
+        names = ", ".join(f"'{name}'" for name in data.interfaces)
+        raise ValueError(
+            f"No plugin type found in '{source_path}': interface(s) {names} have no "
+            "$Anot.plugin(\"<name>\") annotation. Annotate the interface that "
+            "defines the plugin type.")
     ret_plugins = []
 
     registry = load_registry()
