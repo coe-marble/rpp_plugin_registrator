@@ -37,6 +37,11 @@ interface Generic(State) {
   step @0 (state :State) -> (state :State);
 }
 interface Concrete extends(Generic(Imported.Point)) {}
+interface GenericCommand(State, Command) {
+  step @0 (state :State, command :Command) -> (state :State);
+}
+interface ListBound extends(GenericCommand(Local, List(Imported.Point))) {}
+interface NestedListBound extends(GenericCommand(Local, List(List(Imported.Point)))) {}
 ''', encoding="utf-8")
     parser = capnp.SchemaParser()
     loaded = parser.load(str(source))
@@ -89,6 +94,47 @@ def test_bound_generic_interface_uses_concrete_field_schemas(schema):
     prototype, _ = create_method_prototype_string(method, "consumer")
     assert "state: Point" in prototype
     assert "-> Point" in prototype
+
+
+def test_generic_bound_to_a_list_uses_the_element_schema(schema):
+    source, _, loaded = schema
+    inherited = loaded.ListBound.schema.methods_inherited["step"]
+    assert inherited.param_type.fields["command"].proto.slot.type.which() == "anyPointer"
+
+    result = descriptor.parse_capnp_plugin(source, None, relative_to_source=False)
+
+    assert result.is_valid, result.message
+    method = result.data.interfaces["ListBound"].methods[0]
+    params = {param.name: param.type for param in method.params}
+    assert params["state"].name == "Local"
+    assert params["command"].kind == "list"
+    assert params["command"].name == "command"
+    assert params["command"].element_type.kind == "struct"
+    assert params["command"].element_type.name == "Point"
+    prototype, _ = create_method_prototype_string(method, "consumer")
+    assert "command: List[Point]" in prototype
+
+    nested = result.data.interfaces["NestedListBound"].methods[0]
+    command = {param.name: param.type for param in nested.params}["command"]
+    assert command.kind == "list"
+    assert command.element_type.kind == "list"
+    assert command.element_type.element_type.name == "Point"
+
+
+def test_generic_bound_to_a_list_of_primitives_is_reported(tmp_path):
+    source = tmp_path / "numbers.capnp"
+    source.write_text('''@0xc835a539c12d681e;
+struct Point { value @0 :Float64; }
+interface Generic(State, Command) {
+  step @0 (state :State, command :Command) -> (state :State);
+}
+interface NumberList extends(Generic(Point, List(Float64))) {}
+''', encoding="utf-8")
+    loaded = capnp.SchemaParser().load(str(source))
+    command = loaded.NumberList.schema.methods_inherited["step"].param_type.fields["command"]
+
+    with pytest.raises(ValueError, match="list bound to a generic parameter"):
+        descriptor.parse_capnp_type_from_param(command, SimpleNamespace(modules_by_id={}), [])
 
 
 def test_unresolved_struct_id_reports_the_type_id():

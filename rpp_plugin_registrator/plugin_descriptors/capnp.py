@@ -121,6 +121,23 @@ def parse_capnp_plugin_type_from_type_dict(
                     schema=schema.elementType if schema is not None else None) \
                         if hasattr(element_type, 'to_dict') else None,
             )
+    # A generic parameter bound to a list also keeps an AnyPointer in the raw
+    # proto; only the field schema says it is a list. For
+    # Model(Command) specialized with List(Msgs.Command), read the element
+    # type from that schema.
+    if isinstance(schema, capnp.lib.capnp._ListSchema):
+        try:
+            element_schema = schema.elementType
+        except capnp.KjException as error:
+            raise ValueError(
+                "Cannot resolve the element type of a list bound to a generic "
+                "parameter. Only lists of structs can be bound.") from error
+        return TypeInfo(
+            kind="list",
+            name=None,
+            element_type=parse_capnp_plugin_type_from_type_dict(
+                plugin_type, parser, dependencies, schema=element_schema),
+        )
     # Generic parameters keep an AnyPointer in the raw proto even after binding
     # to a concrete struct. The field schema carries that resolved binding.
     # For Controller(State) specialized with Msgs.Odometry2D, classify State
