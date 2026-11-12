@@ -146,7 +146,7 @@ def test_failed_library_refresh_removes_partial_registration(registry, tmp_path,
     before = files_under(registry.home)
     original_source = source.read_bytes()
     failure = RuntimeError("plugin type generation failed")
-    def partial_refresh(_library_name):
+    def partial_refresh(_library_name, *, build_type=None):
         libraries.write_json(rp.get_app_registry_json_path(), {
             "PluginTypes": {"NewLibrary::PartialType": {"Library": "NewLibrary"}},
         })

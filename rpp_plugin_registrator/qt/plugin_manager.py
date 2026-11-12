@@ -328,19 +328,21 @@ class RPPPluginManager(QMainWindow):
         if path is None:
             self.log("Invalid library file selected.")
             return
-        self.log(f"Registering library from '{path}'. This may take a few moments...")
+        build_type = "Debug" if self.libraryDebugCheckBox.isChecked() else "Release"
+        self._registration_logger.debug("Registering library from %s (%s)", path, build_type)
 
         def on_finish(result, error):
             if error is not None:
                 self.log(f"Failed to register library from '{path}': {error}")
                 return
-            self.log("Library registered.")
+            self._registration_logger.debug("Registered library from %s", path)
             self.load_plugins()
             lib_name = self.lib_manager.lib_name_from_path(path)
             self.select_library(lib_name)
 
         def run():
-            self.lib_manager.register_plugin_library(Path(path), link_register=link_install)
+            self.lib_manager.register_plugin_library(
+                Path(path), link_register=link_install, build_type=build_type)
 
         self._do_fn(run, on_finish)
 
@@ -415,14 +417,12 @@ class RPPPluginManager(QMainWindow):
         if lib is None:
             QMessageBox.warning(self, "Warning", "No library selected.")
             return
-        self.log(f"Refreshing library '{lib}'. This may take a few moments...")
         build_type = "Debug" if self.libraryDebugCheckBox.isChecked() else "Release"
 
         def on_finish(result, error):
             if error is not None:
                 self.log(f"Failed to refresh library '{lib}':\n{error}")
                 return
-            self.log(f"Library '{lib}' refreshed ({build_type}).")
             self.load_plugins()
             self.select_library(lib)
 
@@ -455,18 +455,12 @@ class RPPPluginManager(QMainWindow):
         lib_path = self.get_library_path_with_checks(lib)
         build_type = "Debug" if self.libraryDebugCheckBox.isChecked() else "Release"
 
-        self.log(f"Refreshing plugin '{plugin.get('PluginName', '')}'"
-            + f" in library '{lib}'" + (f" ({build_type})" if build_type else "")
-            + ". This may take a few moments...")
-
         def on_finish(result, error):
             if self.selected_item_type == "plugin":
                 if error is not None:
                     self.log(f"Failed to refresh plugin '{plugin.get('PluginName', '')}'"
                         + f" in library '{lib}':\n{error}")
                     return
-                self.log(f"Plugin '{plugin.get('PluginName', '')}'"
-                         + f" refreshed in library '{lib}'.")
             self.load_plugins()
             self.select_library(lib)
             self.select_plugin(plugin.get("PluginName", ""))
@@ -508,10 +502,11 @@ class RPPPluginManager(QMainWindow):
             self.log(f"Unsupported plugin type file type: '{file_path}'.")
             return
 
+        build_type = "Debug" if self.libraryDebugCheckBox.isChecked() else "Release"
         def run():
-            self.lib_manager.register_plugin_type_from_source(full_plugin_path, lib)
+            self.lib_manager.register_plugin_type_from_source(
+                full_plugin_path, lib, build_type=build_type)
 
-        self.log(f"Registering plugin type from '{file_path}' to library '{lib}'. This may take a few moments...")
         def on_finish(result, error):
             if error is not None:
                 self.log(f"Failed to register plugin type '{full_plugin_path}' in library '{lib}': {error}")
@@ -519,7 +514,6 @@ class RPPPluginManager(QMainWindow):
             if result is False:
                 self.log(f"Failed to register plugin type '{full_plugin_path}' in library '{lib}'.")
             else:
-                self.log(f"Plugin type '{full_plugin_path}' registered in library '{lib}'.")
                 self.load_plugins()
                 self.select_library(lib)
 
@@ -571,7 +565,6 @@ class RPPPluginManager(QMainWindow):
         def run():
             return self.lib_manager.register_plugin_from_source(full_plugin_path, lib, build_type=build_type)
 
-        self.log(f"Registering plugin from '{file_path}' to library '{lib}'. This may take a few moments...")
         def on_finish(result, error):
             if error is not None:
                 self.log(f"Failed to register plugin '{full_plugin_path}' in library '{lib}': {error}")
@@ -579,7 +572,6 @@ class RPPPluginManager(QMainWindow):
             if result is None or result.get("PluginName", "") == "":
                 self.log(f"Failed to register plugin '{full_plugin_path}' in library '{lib}'.")
             else:
-                self.log(f"Plugin '{full_plugin_path}' registered in library '{lib}'.")
                 self.load_plugins()
                 self.select_library(lib)
                 self.select_plugin(result.get("PluginName", ""))

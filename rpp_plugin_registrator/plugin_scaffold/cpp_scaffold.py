@@ -321,8 +321,9 @@ public:
 
 }}  // namespace
 
-#include "{class_name}_Adapter_Client.hpp"
-#include "{class_name}_Adapter_Server.hpp"
+// Include the adapter headers explicitly when constructing communication adapters.
+// Keeping their implementations separate prevents optimized native calls from
+// acquiring references to the schema RPC implementations.
 '''
 
     if output_path.is_dir():
@@ -716,6 +717,9 @@ public:
         {struct_name}& operator=(const {struct_name}&) = delete;
 '''
 
+        # Resize callbacks can outlive a temporary nested wrapper (e.g.
+        # input.state().values()). Copy the Cap'n Proto builder handle instead
+        # of capturing that wrapper's `this`; the parent message must stay alive.
         for field in struct.fields:
             name = field.name
             type_name = parse_type_name_from_type_info(field.type, lib_name=lib_name, fully_qualified=True)
@@ -724,8 +728,8 @@ public:
                     content += f'''
         rpp::Data {name}() {{
             return rpp::Data{{builder_.get{to_pascal_case(name)}(),
-                [this](size_t new_size) {{
-                    return builder_.init{to_pascal_case(name)}(new_size);
+                [builder = builder_](size_t new_size) mutable {{
+                    return builder.init{to_pascal_case(name)}(new_size);
                 }}
             }};
         }}
@@ -746,8 +750,8 @@ public:
                     const_list_type = f"rpp::ListConst<{element_type_name}>"
                 content += f'''
         {list_type} {name}() {{ return {list_type}{{builder_.get{to_pascal_case(name)}(),
-                [this](size_t new_size) {{
-                    return builder_.init{to_pascal_case(name)}(new_size);
+                [builder = builder_](size_t new_size) mutable {{
+                    return builder.init{to_pascal_case(name)}(new_size);
                 }}
             }};
         }}

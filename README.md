@@ -171,6 +171,13 @@ python3 rpp_registrator.py generate-interface \
   Their lifecycle callbacks report unsupported remote control until lifecycle
   RPC is implemented; ordinary domain-method RPC remains available. Regenerate
   adapters and rebuild C++ artifacts with the matching runtime.
+- Generated C++ interface headers (`<Type>.hpp`) keep adapter implementations
+  separate so optimized native calls do not introduce RPC linkage dependencies.
+  Code constructing adapters must explicitly include `<Type>_Adapter_Client.hpp`
+  or `<Type>_Adapter_Server.hpp`; each adapter header includes its interface.
+  The registrator includes both when building the plugin-type shared library.
+  Refresh existing plugin types to regenerate these headers for all libraries,
+  including `rpp_control` and `rpp_localization`.
 - C++ extraction is heuristic and expects plugins similar to `rpp::Plugin` implementations in `rpp_core`.
 - Python extraction expects a class deriving from `Plugin`.
 - The registry file is upsert-based: registering the same `plugin.id` replaces the previous entry.
@@ -196,15 +203,17 @@ registered mode, or Unknown for plugins registered before mode tracking.
 Each language backend decides how to apply the requested mode.
 
 **Register in Debug** selects the mode for individual plugin registration and
-refresh, and for whole-library refresh. It is unchecked by default (Release).
+refresh, plugin-type registration, and whole-library registration and refresh.
+It is unchecked by default (Release), including generated plugin-type libraries.
 `refresh_plugin_library(name, build_type="Debug")` similarly applies
 one build type to every plugin; `register_plugin_from_source(path, name,
 build_type="Release")` selects a mode for an individual registration. Build
 choices are passed to registration without changing the global `BUILD_TYPE`.
 
-GUI registration and refresh run in a worker. The log panel receives progress
-through queued Qt signals while management controls are disabled. Compiler
-commands and raw output use DEBUG logging; build failures retain their diagnostic
+GUI registration and refresh run in a worker. The log panel shows each plugin
+and plugin type starting registration and completing, with its final build type,
+through queued Qt signals while management controls are disabled. Compilation,
+GDB inspection, compiler commands and raw output use DEBUG logging; build failures retain their diagnostic
 details in the log and an error dialog with expandable Details. GUI library
 refresh stops and reports failure when a plugin fails to compile. Scrolling
 and copying the log remain available. Batch operations are

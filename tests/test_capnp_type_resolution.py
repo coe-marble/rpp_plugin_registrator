@@ -37,6 +37,8 @@ interface Generic(State) {
   step @0 (state :State) -> (state :State);
 }
 interface Concrete extends(Generic(Imported.Point)) {}
+interface ConcreteList extends(Generic(List(Imported.Point))) {}
+interface ConcreteNestedList extends(Generic(List(List(Imported.Point)))) {}
 ''', encoding="utf-8")
     parser = capnp.SchemaParser()
     loaded = parser.load(str(source))
@@ -89,6 +91,33 @@ def test_bound_generic_interface_uses_concrete_field_schemas(schema):
     prototype, _ = create_method_prototype_string(method, "consumer")
     assert "state: Point" in prototype
     assert "-> Point" in prototype
+
+
+@pytest.mark.parametrize("interface_name,depth", [
+    ("ConcreteList", 1), ("ConcreteNestedList", 2),
+])
+def test_bound_generic_lists_preserve_their_concrete_element_type(schema, interface_name, depth):
+    source, _, loaded = schema
+    inherited = getattr(loaded, interface_name).schema.methods_inherited["step"]
+    assert inherited.param_type.fields["state"].proto.slot.type.which() == "anyPointer"
+
+    result = descriptor.parse_capnp_plugin(source, None, relative_to_source=False)
+
+    assert result.is_valid, result.message
+    method = result.data.interfaces[interface_name].methods[0]
+    field_type = method.params[0].type
+    assert method.results[0].type == field_type
+    for _ in range(depth):
+        assert field_type.kind == "list"
+        field_type = field_type.element_type
+    assert field_type.kind == "struct"
+    assert field_type.name == "Point"
+    assert field_type.capnp_type_display_name == "external/common.capnp:Point"
+    assert result.data.dependencies.count(("external", "common.capnp")) == 1
+    prototype, _ = create_method_prototype_string(method, "consumer")
+    expected = "List[" * depth + "Point" + "]" * depth
+    assert f"state: {expected}" in prototype
+    assert f"-> {expected}" in prototype
 
 
 def test_unresolved_struct_id_reports_the_type_id():

@@ -3,6 +3,7 @@ from __future__ import annotations
 SOURCE_TEMPLATE = """
 #pragma once
 
+#include "${class_name}.hpp"
 #include <memory>
 #include <stdexcept>
 #include <string>

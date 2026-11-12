@@ -99,6 +99,16 @@ def parse_capnp_type_from_param(plugin_param: Dict[str, Any], parser, dependenci
 
 def parse_capnp_plugin_type_from_type_dict(
         plugin_type: Dict[str, Any], parser, dependencies, *, schema=None) -> TypeInfo:
+    # A generic parameter bound to List(Command) still has anyPointer in its
+    # raw proto. Resolve the list and its elements through the bound schema,
+    # just as the struct branch below resolves a parameter bound to a struct.
+    if "anyPointer" in plugin_type and isinstance(schema, capnp._ListSchema):
+        return TypeInfo(
+            kind="list",
+            name=None,
+            element_type=parse_capnp_plugin_type_from_type_dict(
+                {"anyPointer": {}}, parser, dependencies, schema=schema.elementType),
+        )
     is_list = "list" in plugin_type and plugin_type["list"] is not None
     if is_list:
         # Carry the resolved element schema through every list level so imported

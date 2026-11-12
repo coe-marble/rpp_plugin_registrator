@@ -105,7 +105,7 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
 
         if verbose:
             print(f"Full compile command:\n{' '.join(compile_cmd)}\n\n")
-        logger.info("Compiling %s (%s)", class_name, build_type)
+        logger.debug("Compiling %s (%s)", class_name, build_type)
         if print_to_console:
             result = subprocess.run(compile_cmd, check=True)
         elif logger.handlers:
@@ -137,7 +137,7 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
     if as_shared_lib:
         (out_dir / f"{class_name}.build.json").write_text(
             json.dumps({"build_type": build_type}), encoding="utf-8")
-    logger.info("Compiled %s (%s)", class_name, build_type)
+    logger.debug("Compiled %s (%s)", class_name, build_type)
     return None, compile_cmd, out_file_path
 
 
@@ -336,8 +336,8 @@ def generate_cpp_plugin_interface(plugin_type_info: PluginTypeInfo) -> None:
     lib_name = description.get("Library")
     hpp_source_file = get_app_interfaces_path() / "cpp" / "rpp_plugin_types" / lib_name / f"{class_name}.hpp"
     tmp_out_dir = get_tmp_dir_for_compilation(hpp_source_file, class_name)
-    validation_build_type()  # Validate the requested setting before compilation.
-    registration_profile = get_setting("BUILD_TYPE")
+    registration_profile = plugin_type_info.build_type or get_setting("BUILD_TYPE")
+    validation_build_type(registration_profile)  # Validate before compilation.
     if not _has_compiled_profile(tmp_out_dir, class_name, registration_profile):
         tmp_out_dir.mkdir(parents=True, exist_ok=True)
         compile_error, compile_cmd, _ = compile_cpp_plugin_type(
@@ -429,7 +429,7 @@ def get_cpp_plugin_info_string_from_debug_symbols(
             + f"Error: {compile_error}")
 
     gdb_cmd = ["gdb", "-batch", "-x", str(gdb_source_file)]
-    logger.info("Inspecting %s metadata with GDB", class_name)
+    logger.debug("Inspecting %s metadata with GDB", class_name)
     gdb_env = os.environ.copy()
     rpp_cpp_core_path = get_setting("RPP_CPP_CORE_PATH")
     if rpp_cpp_core_path:
@@ -447,7 +447,7 @@ def get_cpp_plugin_info_string_from_debug_symbols(
         output = result.stdout.decode()
         if result.stderr:
             output += "\n" + result.stderr.decode()
-        logger.info("Finished GDB inspection of %s", class_name)
+        logger.debug("Finished GDB inspection of %s", class_name)
     except Exception as e:
         full_command = " ".join(gdb_cmd)
         raise RuntimeError(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 SOURCE_CONTENT = """#pragma once
+#include "${class_name}.hpp"
 #include <functional>
 #include <memory>
 #include <optional>

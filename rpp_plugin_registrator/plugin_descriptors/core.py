@@ -205,6 +205,7 @@ class PluginTypeInfo:
     parse_data: ParsePluginTypeData | None = None
     validation_data: PluginTypeValidationData | None = None
     register_data: PluginTypeRegisterData | None = None
+    build_type: str | None = None
 
     def get_interface(self) -> Optional[InterfaceInfo]:
         if self.parse_data and self.parse_data.interfaces:

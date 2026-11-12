@@ -102,31 +102,64 @@ def test_individual_registration_selects_mode_before_validation_and_remembers_it
     assert remembered.build_type == "Debug"
 
 
-def test_library_refresh_applies_one_build_type_to_all_plugins(monkeypatch, tmp_path):
+@pytest.mark.parametrize("profile", ["Debug", "Release"])
+def test_library_refresh_applies_one_build_type_to_all_plugins(monkeypatch, tmp_path, profile):
     import rpp_plugin_registrator.library_manager as library_manager
 
     (tmp_path / "plugins.json").write_text(json.dumps({
+        "PluginTypes": [{"Path": "interfaces.capnp"}],
         "Plugins": [{"Path": "first.hpp"}, {"Path": "second.hpp"}]}))
     manager = library_manager.LibraryManager.__new__(library_manager.LibraryManager)
     manager.get_library_path = Mock(return_value=tmp_path)
     manager.is_valid_plugin_library = Mock(return_value=True)
     manager._prepare_plugin_registration = Mock()
     manager.register_plugin = Mock()
+    manager.add_to_manifest = Mock()
     manager._record_completed_library_registration_version = Mock()
     manager._iter_registration_files = lambda path, entries, *args: (
         (path / entry["Path"], entry) for entry in entries)
     monkeypatch.setattr(library_manager, "compute_library_registration_status",
         lambda *args: SimpleNamespace(blocking_dependencies=[]))
-    manager.refresh_plugin_library("examples", build_type="Release")
+    register_types = Mock(return_value=[])
+    monkeypatch.setattr(library_manager.ptyp_reg_api, "register_plugin_type_from_source", register_types)
+    manager.refresh_plugin_library("examples", build_type=profile)
+    register_types.assert_called_once_with(
+        tmp_path / "interfaces.capnp", "examples", override=True, build_type=profile)
     assert manager._prepare_plugin_registration.call_count == 2
-    assert all(call.kwargs["build_type"] == "Release"
+    assert all(call.kwargs["build_type"] == profile
                for call in manager._prepare_plugin_registration.call_args_list)
     manager._record_completed_library_registration_version.reset_mock()
     manager._prepare_plugin_registration.side_effect = ValueError("compiler failed")
     with pytest.warns(UserWarning, match="compiler failed"):
         with pytest.raises(ValueError, match="compiler failed"):
-            manager.refresh_plugin_library("examples", throw=True, build_type="Release")
+            manager.refresh_plugin_library("examples", throw=True, build_type=profile)
     manager._record_completed_library_registration_version.assert_not_called()
+
+
+@pytest.mark.parametrize("profile", ["Debug", "Release"])
+def test_plugin_type_compilation_honors_explicit_build_type(monkeypatch, tmp_path, profile):
+    from rpp_plugin_registrator.plugin_descriptors.core import PluginTypeInfo
+
+    # The GUI selection must win over the CLI's RelWithDebInfo default.
+    monkeypatch.setattr(cpp, "get_setting", lambda name: "RelWithDebInfo")
+    monkeypatch.setattr(cpp, "get_app_interfaces_path", lambda: tmp_path)
+    staged = tmp_path / "staged"
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    monkeypatch.setattr(cpp, "get_tmp_dir_for_compilation", lambda *args: staged)
+    monkeypatch.setattr(cpp, "get_cpp_shared_libraries_path", lambda *args, **kwargs: installed)
+
+    def compile_type(**kwargs):
+        output = kwargs["out_dir"] / "Example.so"
+        output.write_text("compiled interface")
+        return None, [], output
+
+    compile_type_mock = Mock(side_effect=compile_type)
+    monkeypatch.setattr(cpp, "compile_cpp_plugin_type", compile_type_mock)
+    cpp.generate_cpp_plugin_interface(PluginTypeInfo(
+        info={"ClassName": "Example", "Library": "examples"}, build_type=profile))
+    assert compile_type_mock.call_args.kwargs["build_type"] == profile
+    assert (installed / "Example.so").is_file()
 
 
 def test_metadata_failure_preserves_loader_diagnostics_from_gdb_stderr(monkeypatch, tmp_path):
@@ -156,15 +189,18 @@ def test_compiler_diagnostics_are_streamed_and_preserved_on_failure(
     monkeypatch.setattr(cpp.subprocess, "Popen", popen)
     run = Mock(side_effect=AssertionError("Compilation should stream rather than capture output"))
     monkeypatch.setattr(cpp.subprocess, "run", run)
-    caplog.set_level(log_level, logger="rpp_plugin_registrator")
-    handler = logging.NullHandler()
-    cpp.logger.addHandler(handler)
-    try:
-        error, _, _ = cpp._compile_rpp_file(["example.cpp"], tmp_path, [], [], "Example",
-                                           build_type="Debug")
-    finally:
-        cpp.logger.removeHandler(handler)
-    assert "Compiling Example (Debug)" in caplog.text
+    # Capture directly so application/runner logging settings cannot disable
+    # the package logger or prevent its records from reaching pytest's root handler.
+    caplog.set_level(log_level)
+    logger = logging.Logger("rpp_plugin_registrator.compiler_test", level=log_level)
+    logger.propagate = False
+    logger.addHandler(caplog.handler)
+    monkeypatch.setattr(cpp, "logger", logger)
+    error, _, _ = cpp._compile_rpp_file(["example.cpp"], tmp_path, [], [], "Example",
+                                       build_type="Debug")
+    assert ("Compiling Example (Debug)" in caplog.text) is (log_level == logging.DEBUG)
+    assert ("Compiled Example (Debug)" in caplog.text) is (
+        log_level == logging.DEBUG and returncode == 0)
     assert ("example.hpp: warning: diagnostic" in caplog.text) is (log_level == logging.DEBUG)
     assert ("Command:" in caplog.text) is (log_level == logging.DEBUG)
     assert (tmp_path / "Example.build.json").exists() is (returncode == 0)

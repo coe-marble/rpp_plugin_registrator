@@ -1,6 +1,8 @@
 REGISTER_CPP_PLUGIN_TYPE_SOURCE_TEMPLATE = """
 
 #include <{plugin_type_source_file}>
+#include <rpp_plugin_types/{lib_name}/{class_name}_Adapter_Client.hpp>
+#include <rpp_plugin_types/{lib_name}/{class_name}_Adapter_Server.hpp>
 
 extern "C" rpp::ServerAdapter* create_plugin_server(
         std::shared_ptr<rpp::RppLogger> logger) {{

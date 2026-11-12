@@ -166,15 +166,13 @@ def test_generated_cpp_uses_lifecycle_base(schema, tmp_path, stateful):
     desc = description(schema("Estimate" if stateful else None))
     output = tmp_path / "Localizer.hpp"
     generate_plugin_type_hpp(desc, output)
-    # Isolate the generated base from runtime/adapters: this test verifies that
-    # users can override its generated reader callback signatures in real C++.
+    # The generated interface must work without adapter headers being present.
+    # Users can override its reader callbacks without pulling in RPC code.
     support = tmp_path / "rpp_cpp"
     support.mkdir()
     runtime_header = Path(__file__).resolve().parents[2] / "rpp_cpp/include/rpp_cpp/plugin_def.hpp"
     (support / "plugin.hpp").write_text(f'#include "{runtime_header}"\n')
     (support / "context.hpp").write_text("")
-    (tmp_path / "Localizer_Adapter_Client.hpp").write_text("")
-    (tmp_path / "Localizer_Adapter_Server.hpp").write_text("")
     if stateful:
         state_header = tmp_path / "rpp_schema/lifecycle_fixture/Estimate.hpp"
         state_header.parent.mkdir(parents=True)
@@ -247,10 +245,13 @@ def test_real_cpp_adapters_compile_and_reject_unsupported_lifecycle(
     scaffold_cpp(desc, output)
 
     source = tmp_path / "adapter.cpp"
-    source.write_text('''#include <rpp_plugin_types/lifecycle_fixture/Localizer.hpp>
+    source.write_text('''#include <rpp_plugin_types/lifecycle_fixture/Localizer_Adapter_Client.hpp>
+#include <rpp_plugin_types/lifecycle_fixture/Localizer_Adapter_Server.hpp>
 #include <type_traits>
 using Client = lifecycle_fixture::hidden::Localizer_Adapter_Client;
+using Server = lifecycle_fixture::hidden::Localizer_Adapter_Server;
 static_assert(!std::is_abstract_v<Client>);
+static_assert(!std::is_abstract_v<Server>);
 int main() {
     Client client;
     // Foreign adapters are lifecycle proxies. Direct lifecycle callbacks are
