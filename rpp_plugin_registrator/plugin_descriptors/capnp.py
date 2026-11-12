@@ -46,8 +46,9 @@ def bind_lifecycle_state(interface, node, loaded):
         name=name, kind="struct", capnp_type_display_name=schema.node.displayName),
         lifecycle_state_schema_id=schema.node.id)
 
-def overwrite_capnp_schema_id(source_text: str) -> str:
-    schema_id = secrets.randbits(64) | (1 << 63)
+def overwrite_capnp_schema_id(source_text: str, schema_id: int | None = None) -> str:
+    if schema_id is None:
+        schema_id = secrets.randbits(64) | (1 << 63)
     source_text_new_id = re.sub(r'@0x[0-9a-fA-F]+', f'@0x{schema_id:016x}', source_text, count=1)
 
     return source_text_new_id, schema_id

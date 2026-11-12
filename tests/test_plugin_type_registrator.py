@@ -1,4 +1,6 @@
 import json
+import os
+import re
 from re import sub
 import sys
 import tempfile
@@ -760,6 +762,42 @@ interface TestType1 $Anot.plugin("test") {
         loaded = gen_source_file.read_text(encoding="utf-8")
 
         assert "class MockControllerPlugin" in loaded
+
+    def test_scaffold_cpp_registering_an_imported_schema_again_keeps_its_id(self):
+        self.registrator_module.SCAFFOLD_LANGUAGES = ["cpp"]
+        second_lib = self.manager.get_or_create_plugin_library("secondlib")
+        supporting = second_lib.path / "plugins" / "supporting_struct.capnp"
+        supporting.parent.mkdir(parents=True, exist_ok=True)
+        supporting.write_text(self.supporting_file_src(), encoding="utf-8")
+        registry_api.register_plugin_type_from_source(supporting, library="secondlib")
+
+        dependent = self.lib_h.path / "plugins" / "MockControllerPlugin.capnp"
+        dependent.parent.mkdir(parents=True, exist_ok=True)
+        dependent.write_text(self.plugin_type_src1(), encoding="utf-8")
+        registry_api.register_plugin_type_from_source(dependent, library="testlib")
+
+        registered = rp.get_app_capnp_interfaces_path() / "secondlib" / "supporting_struct.capnp"
+        first_id = registered.read_text(encoding="utf-8").split(";", 1)[0]
+
+        # A refresh registers the imported file again with override. The
+        # generated source of MockControllerPlugin names the schemas it
+        # imports by id and is not generated again here.
+        registry_api.register_plugin_type_from_source(
+            supporting, library="secondlib", override=True)
+
+        assert registered.read_text(encoding="utf-8").split(";", 1)[0] == first_id
+        capnp_gen = rp.get_app_interfaces_path() / "cpp" / "capnp_gen"
+        source = (capnp_gen / "testlib" / "MockControllerPlugin.capnp.c++").read_text(
+            encoding="utf-8")
+        declared = "".join(
+            header.read_text(encoding="utf-8")
+            for directory, _, names in os.walk(capnp_gen)
+            for header in (Path(directory) / name for name in names)
+            if header.name.endswith(".capnp.h"))
+        referenced = set(re.findall(r"\bs_([0-9a-f]{16})\b", source))
+        declared_ids = set(re.findall(r"CAPNP_DECLARE_SCHEMA\(([0-9a-f]{16})\)", declared))
+        assert referenced
+        assert referenced <= declared_ids
 
     def test_scaffold_cpp2(self):
         self.registrator_module.SCAFFOLD_LANGUAGES = ["cpp"]
