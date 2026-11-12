@@ -35,7 +35,8 @@ PRIMITIVE_TYPE_MAP = {
 
 
 def parse_type_name_from_type_info(type_info: TypeInfo,
-        type_aliases: list = None, include_types: list = None, lib_name: str = None) -> str:
+        type_aliases: list = None, include_types: list = None, lib_name: str = None,
+        *, fully_qualified: bool = False) -> str:
     """Extract the type name from a TypeInfo dictionary."""
 
     if isinstance(type_info, TypeInfo):
@@ -43,7 +44,9 @@ def parse_type_name_from_type_info(type_info: TypeInfo,
     if type_info["Kind"] == "primitive":
         return PRIMITIVE_TYPE_MAP.get(type_info["Name"], type_info["Name"])
     elif type_info["Kind"] == "list":
-        element_type_name = parse_type_name_from_type_info(type_info["ElementType"], type_aliases, include_types, lib_name=lib_name)
+        element_type_name = parse_type_name_from_type_info(
+            type_info["ElementType"], type_aliases, include_types,
+            lib_name=lib_name, fully_qualified=fully_qualified)
         return f"{element_type_name}::List>"
     elif type_info["Kind"] == "struct":
         capnp_type_display_name = type_info.get("CapnpTypeDisplayName", "")
@@ -62,6 +65,10 @@ def parse_type_name_from_type_info(type_info: TypeInfo,
             type_aliases.append(alias_native)
         if include_types is not None and include_type not in include_types:
             include_types.append(include_type)
+        if fully_qualified:
+            # Including a header does not import its namespace. Standalone struct
+            # headers cannot rely on aliases declared inside plugin classes.
+            return f"::rpp_schema::{library_name}::{type_info['Name']}"
         return f"{type_info['Name']}"
     else:
         raise ValueError(f"Unsupported type kind: {type_info['Kind']}")
@@ -272,7 +279,7 @@ def generate_plugin_type_hpp(description: PluginTypeInfo, output_path: Path) -> 
     if state is not None:
         state_name = state["Name"]
         lifecycle_type = f"rpp_schema::{lib_name}::{state_name}::Const"
-        lifecycle_alias = f"    using LifecycleState = {lifecycle_type};"
+        lifecycle_alias = f"    using HandoverState = rpp_schema::{lib_name}::{state_name};"
         state_include = f'#include "rpp_schema/{lib_name}/{state_name}.hpp"'
         if state_include not in include_types.splitlines():
             include_types += "\n" + state_include
@@ -378,8 +385,8 @@ def generate_plugin_type_foreign_language_adapter_client_hpp(description: Plugin
     methods_string = generate_methods_for_foreign_language_adapter_client(description.info["Methods"])
     lifecycle_state_codec = generate_lifecycle_state_adapter_code(description)
     stateful = description.info.get("LifecycleState") is not None
-    activation_argument = "const std::optional<LifecycleState> &" if stateful else ""
-    deactivation_type = "rpp::DeactivationResult<LifecycleState>" if stateful else "rpp::CallbackResult"
+    activation_argument = "const std::optional<HandoverState::Const> &" if stateful else ""
+    deactivation_type = "rpp::DeactivationResult<HandoverState::Const>" if stateful else "rpp::CallbackResult"
     failure = 'rpp::CallbackResult::failure("Remote lifecycle control is not supported yet")'
     deactivation_result = "{" + failure + ", std::nullopt}" if stateful else failure
     lifecycle_callbacks = f'''
@@ -452,6 +459,8 @@ def generate_plugin_type_foreign_language_adapter_server_hpp(description: Plugin
 
 def make_as_struct_method_string(struct_name : str,
         fields: list, lib_name: str, indent:str, accessor_name: str) -> str:
+    # Match the qualified field types emitted by scaffold_structs(), including
+    # wrappers used to convert imported structs and lists to their native forms.
     list_types = [field for field in fields if \
         field.type.kind == "list"]
     data_types = [field for field in fields if \
@@ -461,7 +470,7 @@ def make_as_struct_method_string(struct_name : str,
 """
     for list_type in list_types:
         element_type = list_type.type.element_type
-        element_reader_type = parse_type_name_from_type_info(element_type, lib_name=lib_name)
+        element_reader_type = parse_type_name_from_type_info(element_type, lib_name=lib_name, fully_qualified=True)
         if element_type.kind == "struct":
             content += f'''
     {indent}std::vector<{element_reader_type}_Native> {list_type.name}_vec;
@@ -489,7 +498,7 @@ def make_as_struct_method_string(struct_name : str,
         field_name = field.name
         field_type = field.type
         if field_type.kind == "struct":
-            field_type_name = parse_type_name_from_type_info(field_type, lib_name=lib_name)
+            field_type_name = parse_type_name_from_type_info(field_type, lib_name=lib_name, fully_qualified=True)
             content += f"        {indent}{field_type_name}::Const({accessor_name}.get{to_pascal_case(field_name)}()).as_struct(),\n"
         elif field_type.kind == "list":
             content += f"        {indent}std::move({field_name}_vec),\n"
@@ -544,11 +553,15 @@ struct {struct_name}_Native {{
 
 """
         list_types = []
+        # This header lives in rpp_schema::<lib_name>, while fields can belong
+        # to another library (e.g. rpp_common::FloatMatrix). Qualify both wrapper
+        # and _Native names here and in the accessors below; includes alone do
+        # not make those names visible in the current namespace.
         for field in struct.fields:
-            field_type = parse_type_name_from_type_info(field.type, lib_name=lib_name)
+            field_type = parse_type_name_from_type_info(field.type, lib_name=lib_name, fully_qualified=True)
             field_name = field.name
             if field.type.kind == "list":
-                element_type_name = parse_type_name_from_type_info(field.type.element_type, lib_name=lib_name)
+                element_type_name = parse_type_name_from_type_info(field.type.element_type, lib_name=lib_name, fully_qualified=True)
                 if field.type.element_type.kind == "struct":
                     element_type_name += "_Native"
                 content += f"    std::vector<{element_type_name}> {field_name};\n"
@@ -618,7 +631,7 @@ public:
 
         # FIELD ACCESSORS
         for field in struct.fields:
-            field_type = parse_type_name_from_type_info(field.type, lib_name=lib_name)
+            field_type = parse_type_name_from_type_info(field.type, lib_name=lib_name, fully_qualified=True)
             field_name = field.name
             field_name_pascal = to_pascal_case(field_name)
             if field.type.kind == "struct":
@@ -626,7 +639,7 @@ public:
             inline {field_type}::Const {field_name}() const {{ return {field_type}::Const(reader_.get{field_name_pascal}()); }}\n
 '''
             elif field.type.kind == "list":
-                element_type = parse_type_name_from_type_info(field.type.element_type, lib_name=lib_name)
+                element_type = parse_type_name_from_type_info(field.type.element_type, lib_name=lib_name, fully_qualified=True)
                 if field.type.element_type.kind == "struct":
                     list_type = f"{element_type}::Const::List"
                 else:
@@ -665,7 +678,7 @@ public:
         for field in struct.fields:
             if field.type.kind == "primitive":
                 name = field.name
-                type_name = parse_type_name_from_type_info(field.type, lib_name=lib_name)
+                type_name = parse_type_name_from_type_info(field.type, lib_name=lib_name, fully_qualified=True)
                 getter_suffix = ""
                 if type_name == "std::string":
                     getter_suffix = ".cStr()"
@@ -705,7 +718,7 @@ public:
 
         for field in struct.fields:
             name = field.name
-            type_name = parse_type_name_from_type_info(field.type, lib_name=lib_name)
+            type_name = parse_type_name_from_type_info(field.type, lib_name=lib_name, fully_qualified=True)
             if field.type.kind == "primitive":
                 if type_name == "rpp::Data":
                     content += f'''
@@ -724,7 +737,7 @@ public:
         {type_name} {name}() const {{ return builder_.asReader().get{to_pascal_case(name)}(); }}
 '''
             elif field.type.kind == "list":
-                element_type_name = parse_type_name_from_type_info(field.type.element_type, lib_name=lib_name)
+                element_type_name = parse_type_name_from_type_info(field.type.element_type, lib_name=lib_name, fully_qualified=True)
                 if field.type.element_type.kind == "struct":
                     list_type = f"{element_type_name}::List"
                     const_list_type = f"{element_type_name}::Const::List"

@@ -73,6 +73,7 @@ def test_binding_records_struct_and_stable_schema_identity(schema):
     assert state["Kind"] == "struct"
     assert state["SchemaId"] == second.info["LifecycleState"]["SchemaId"]
     assert int(state["SchemaId"], 16) > 0
+    assert "Estimate" in first.parse_data.structs
 
 
 @pytest.mark.parametrize("binding", ["Missing", "Other", "", "Estimate.position",
@@ -89,8 +90,20 @@ def test_invalid_binding_is_rejected(schema, binding):
 def test_generated_python_callbacks_and_dispatch(schema, tmp_path, monkeypatch, stateful):
     desc = description(schema("Estimate" if stateful else None))
     generate_structs(desc, tmp_path)
+    assert (tmp_path / "python/rpp_schema/__init__.py").is_file()
+    assert (tmp_path / "python/rpp_schema/lifecycle_fixture/__init__.py").is_file()
     monkeypatch.syspath_prepend(str(tmp_path / "python"))
-    # Keep temporary generated schema modules scoped to this test.
+    # Python resolves an already-imported package from sys.modules before it
+    # considers the generated directory added above. Hide any schema package
+    # loaded by another test so this import exercises the generated package.
+    saved_schema_modules = {
+        name: module for name, module in sys.modules.items()
+        if name == "rpp_schema" or name.startswith("rpp_schema.")
+    }
+    for name in saved_schema_modules:
+        sys.modules.pop(name)
+    # Keep temporary generated schema modules scoped to this test, then put
+    # unrelated modules back exactly as they were.
     original_modules = set(sys.modules)
     plugin_file, _ = generate_plugin_class(desc, tmp_path)
     try:
@@ -145,6 +158,7 @@ def test_generated_python_callbacks_and_dispatch(schema, tmp_path, monkeypatch, 
         for name in set(sys.modules) - original_modules:
             if name == "rpp_schema" or name.startswith("rpp_schema."):
                 sys.modules.pop(name, None)
+        sys.modules.update(saved_schema_modules)
 
 
 @pytest.mark.parametrize("stateful", [False, True])
@@ -178,8 +192,8 @@ struct Estimate {
 }
 ''')
         callbacks = '''
-    rpp::CallbackResult on_activate(const std::optional<LifecycleState> &) override {return {};}
-    rpp::DeactivationResult<LifecycleState> on_deactivate() override {return {};}
+    rpp::CallbackResult on_activate(const std::optional<HandoverState::Const> &) override {return {};}
+    rpp::DeactivationResult<HandoverState::Const> on_deactivate() override {return {};}
 '''
     else:
         callbacks = '''

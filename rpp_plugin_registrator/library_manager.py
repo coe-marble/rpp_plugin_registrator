@@ -29,6 +29,7 @@ from rpp_plugin_registrator.registry_config import (
     LIBRARY_PLUGINS_FILENAME,
     LIBRARY_PLUGIN_TYPES_KEY,
     LIBRARY_PLUGINS_KEY,
+    LIBRARY_REGISTRATOR_VERSION_KEY,
 )
 from rpp_plugin_registrator.payload_builders import (
     build_library_manifest,
@@ -37,6 +38,12 @@ from rpp_plugin_registrator.payload_builders import (
     build_library_package,
     build_library_plugin_file_plugin_type_entry,
     build_plugin_info_payload,
+)
+from rpp_plugin_registrator.registrator_version import (
+    current_registrator_version,
+)
+from rpp_plugin_registrator.library_registration_status import (
+    compute_library_registration_status,
 )
 
 @dataclass
@@ -167,11 +174,13 @@ class LibraryManager:
     def _ensure_layout(self, init_anot_only: bool = False):
         """Ensure required directory structure exists."""
         types = ptyp_reg_api.ensure_rpp_layout(init_anot_only=init_anot_only)
-        first = types[0] if types else None
-        if first is None:
-            return
-        lib_name = first.get("Library")
-        self.add_to_manifest(lib_name=lib_name, plugin_type_or_list=types)
+        types_by_library = {}
+        for plugin_type in types:
+            types_by_library.setdefault(plugin_type["Library"], []).append(plugin_type)
+        for library_name, library_types in types_by_library.items():
+            self.add_to_manifest(
+                lib_name=library_name, plugin_type_or_list=library_types)
+            self._record_completed_library_registration_version(library_name)
 
     # Library Query Methods
     def get_available_plugins(self):
@@ -250,22 +259,28 @@ class LibraryManager:
             if os.path.isdir(full_path):
                 if self.is_valid_plugin_library(full_path):
                     info = self.get_library_info(full_path, only_registered=True)
+                    manifest = self.load_lib_manifest(full_path)
                     libs.append({
                         "Name": info['Library'],
                         "Type": "install",
                         "Path": full_path,
-                        "Version": info['Version']
+                        "Version": info['Version'],
+                        LIBRARY_REGISTRATOR_VERSION_KEY: manifest.get(
+                            LIBRARY_REGISTRATOR_VERSION_KEY),
                     })
             elif n.endswith('.json'):
                 s = load_json5(Path(full_path))
                 lib = s['Path']
                 if os.path.isdir(lib) and self.is_valid_plugin_library(lib):
                     info = self.get_library_info(lib, only_registered=True)
+                    manifest = self.load_lib_manifest(lib)
                     libs.append({
                         "Name": info['Library'],
                         "Type": "link",
                         "Path": lib,
-                        "Version": info['Version']
+                        "Version": info['Version'],
+                        LIBRARY_REGISTRATOR_VERSION_KEY: manifest.get(
+                            LIBRARY_REGISTRATOR_VERSION_KEY),
                     })
         return libs
 
@@ -465,6 +480,16 @@ class LibraryManager:
         if not self.is_valid_plugin_library(path):
             raise ValueError(f"Library '{lib_name}' is not a valid library")
 
+        status = compute_library_registration_status(self, path)
+        blocked_by = status.blocking_dependencies
+        if blocked_by:
+            raise ValueError(
+                f"Cannot refresh library '{lib_name}' until its dependencies are "
+                f"registered with rpp-plugin-registrator "
+                f"{status.current_version}: "
+                f"{', '.join(blocked_by)}"
+            )
+
         try:
             plugins = load_json5(Path(self._plugins_path(path)))
         except Exception as e:
@@ -492,6 +517,8 @@ class LibraryManager:
                     raise e
                 continue
             self.register_plugin(comp_info, lib_name, append_to_json=False, append_to_manifest=True)
+
+        self._record_completed_library_registration_version(path)
 
     def register_plugin_library(self, path, link_register=False):
         """Register a plugin library."""
@@ -695,6 +722,12 @@ class LibraryManager:
         lib_name = self.lib_name_from_path(lib_path)
         manifest_file = self._manifest_path(lib_name)
         write_json(Path(manifest_file), manifest_data, indent=4, sort_keys=False)
+
+    def _record_completed_library_registration_version(self, lib_path):
+        """Persist the version that completed full library registration."""
+        manifest_data = self.load_lib_manifest(lib_path)
+        manifest_data[LIBRARY_REGISTRATOR_VERSION_KEY] = current_registrator_version()
+        self.save_lib_manifest(lib_path, manifest_data)
 
     def add_to_manifest(self, lib_name,
             plugin_or_list: PluginInfo | list | None = None,

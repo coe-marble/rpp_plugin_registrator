@@ -8,6 +8,9 @@ import pytest
 
 import rpp_plugin_registrator
 from rpp_plugin_registrator.library_manager import LibraryManager
+from rpp_plugin_registrator.library_registration_status import (
+    compute_library_registration_status,
+)
 from rpp_plugin_registrator import registry_config as rp
 from rpp_plugin_registrator.plugin_validators.dispatch import PluginValidationResult, PluginValidationData
 from rpp_plugin_registrator.plugin_descriptors import parse_plugin_file
@@ -56,6 +59,75 @@ class TestLibraryManager:
             assert "rpp_testing" in plugins
             assert any(lib["Name"] == "rpp_common" for lib in libraries)
             assert any(lib["Name"] == "rpp_testing" for lib in libraries)
+            for library_name in ("rpp_common", "rpp_testing"):
+                manifest = manager.load_lib_manifest(library_name)
+                assert rp.LIBRARY_REGISTRATOR_VERSION_KEY in manifest
+
+    def test_refresh_records_registrator_version(self, monkeypatch):
+        """Library manifests identify the tool version that last refreshed them."""
+        manager = LibraryManager(rpp_home=self.home / ".rpp")
+        handle = manager.get_or_create_plugin_library("TestLib")
+        monkeypatch.setattr(
+            "rpp_plugin_registrator.library_manager.current_registrator_version",
+            lambda: "0.2.0",
+        )
+        monkeypatch.setattr(
+            "rpp_plugin_registrator.library_registration_status.current_registrator_version",
+            lambda: "0.2.0",
+        )
+
+        manager.refresh_plugin_library(handle.name)
+        manifest = manager.load_lib_manifest(handle.path)
+        assert manifest[rp.LIBRARY_REGISTRATOR_VERSION_KEY] == "0.2.0"
+        listed_library = next(
+            library for library in manager.list_plugin_libraries()
+            if library["Name"] == handle.name)
+        assert listed_library[rp.LIBRARY_REGISTRATOR_VERSION_KEY] == "0.2.0"
+
+        manifest[rp.LIBRARY_REGISTRATOR_VERSION_KEY] = "0.1.0"
+        manager.save_lib_manifest(handle.path, manifest)
+        status = compute_library_registration_status(manager, handle.name)
+        assert status.registered_version == "0.1.0"
+        assert status.current_version == "0.2.0"
+        assert status.update_available
+        assert status.refresh_ready
+
+    @pytest.mark.parametrize("library_version", [None, "0.1.0", "0.2.0"])
+    @pytest.mark.parametrize("throw", [True, False])
+    def test_refresh_is_blocked_until_registered_dependencies_are_current(
+            self, monkeypatch, library_version, throw):
+        manager = LibraryManager(rpp_home=self.home / ".rpp")
+        dependency = manager.get_or_create_plugin_library("DependencyLib")
+        library = manager.get_or_create_plugin_library("TestLib")
+        monkeypatch.setattr(
+            "rpp_plugin_registrator.library_manager.current_registrator_version",
+            lambda: "0.2.0",
+        )
+        monkeypatch.setattr(
+            "rpp_plugin_registrator.library_registration_status.current_registrator_version",
+            lambda: "0.2.0",
+        )
+
+        package_path = Path(library.path) / "package.json"
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+        package["Dependencies"] = ["DependencyLib"]
+        package_path.write_text(json.dumps(package), encoding="utf-8")
+
+        dependency_manifest = manager.load_lib_manifest(dependency.path)
+        dependency_manifest[rp.LIBRARY_REGISTRATOR_VERSION_KEY] = "0.1.0"
+        manager.save_lib_manifest(dependency.path, dependency_manifest)
+        library_manifest = manager.load_lib_manifest(library.path)
+        if library_version is None:
+            library_manifest.pop(rp.LIBRARY_REGISTRATOR_VERSION_KEY, None)
+        else:
+            library_manifest[rp.LIBRARY_REGISTRATOR_VERSION_KEY] = library_version
+        manager.save_lib_manifest(library.path, library_manifest)
+        status = compute_library_registration_status(manager, library.name)
+
+        assert status.blocking_dependencies == ["DependencyLib"]
+        assert not status.refresh_ready
+        with pytest.raises(ValueError, match="DependencyLib"):
+            manager.refresh_plugin_library(library.name, throw=throw)
 
 
 

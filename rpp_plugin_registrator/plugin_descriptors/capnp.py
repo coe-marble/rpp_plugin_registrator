@@ -69,68 +69,76 @@ def parse_dependency(lib_and_file_name: str) -> Tuple[str, str] | None:
         return lib_name, Path(file_name).name
     return None
 
+def _type_needs_resolved_schema(plugin_type: Dict[str, Any]) -> bool:
+    """Whether raw Cap'n Proto metadata lacks the concrete field type."""
+    if "struct" in plugin_type and plugin_type["struct"] is not None:
+        return True
+    if "anyPointer" in plugin_type and plugin_type["anyPointer"] is not None:
+        return True
+    if "list" in plugin_type and plugin_type["list"] is not None:
+        element_type = plugin_type["list"].get("elementType")
+        return isinstance(element_type, dict) and _type_needs_resolved_schema(
+            element_type)
+    return False
+
+
 def parse_capnp_type_from_param(plugin_param: Dict[str, Any], parser, dependencies) -> TypeInfo:
-    from capnp import KjException
-    # try to parse complex types. hasattr will raise an exception...
-    try:
-        if hasattr(plugin_param, "schema"):
+    raw_type = plugin_param.proto.slot.type.to_dict()
+    schema = None
+    # pycapnp can raise "Schema type is unknown" for lists of primitives. Their
+    # raw type is complete, so access the resolved schema only for imports and
+    # generic bindings whose concrete struct identity cannot be read from proto.
+    if _type_needs_resolved_schema(raw_type):
+        try:
             schema = plugin_param.schema
-        else:
-            schema = plugin_param
-
-        if hasattr(schema, "node") \
-                and hasattr(schema, "fields_list"):
-            display_name = schema.node.displayName
-            name = display_name.split(':')[-1]
-
-            lib_and_file_name = display_name.split(':')[0]
-            dep = parse_dependency(lib_and_file_name)
-            if dep and dep not in dependencies:
-                dependencies.append(dep)
-
-            return TypeInfo(
-                kind="struct",
-                name=name,
-                capnp_type_display_name=display_name,
-            )
-        if hasattr(schema, "elementType"):
-            element_type = schema.elementType
-            name = plugin_param.proto.name
-            return TypeInfo(
-                kind="list",
-                name=name,
-                element_type=parse_capnp_type_from_param(element_type, parser, dependencies),
-            )
-    except KjException:
-        pass
-
-    return parse_capnp_plugin_type_from_type_dict(plugin_param.proto.slot.type.to_dict(), parser, dependencies)
+        except capnp.KjException:
+            schema = None
+    result = parse_capnp_plugin_type_from_type_dict(
+        raw_type, parser, dependencies, schema=schema)
+    return replace(result, name=plugin_param.proto.name) if result.kind == "list" else result
 
 def parse_capnp_plugin_type_from_type_dict(
-        plugin_type: Dict[str, Any], parser, dependencies) -> TypeInfo:
+        plugin_type: Dict[str, Any], parser, dependencies, *, schema=None) -> TypeInfo:
     is_list = "list" in plugin_type and plugin_type["list"] is not None
     if is_list:
+        # Carry the resolved element schema through every list level so imported
+        # structs and bound generic elements resolve just like direct fields.
         element_type = plugin_type["list"]["elementType"]
         if isinstance(element_type, dict):
             return TypeInfo(
                 kind="list",
                 name=None,
                 element_type=parse_capnp_plugin_type_from_type_dict(
-                    element_type, parser, dependencies),
+                    element_type, parser, dependencies,
+                    schema=schema.elementType if schema is not None else None),
             )
         else:
             return TypeInfo(
                 kind="list",
                 name=element_type.name if hasattr(element_type, 'name') else None,
                 element_type=parse_capnp_plugin_type_from_type_dict(
-                    element_type.to_dict(), parser, dependencies) \
+                    element_type.to_dict(), parser, dependencies,
+                    schema=schema.elementType if schema is not None else None) \
                         if hasattr(element_type, 'to_dict') else None,
             )
-    is_struct = "struct" in plugin_type and plugin_type["struct"] is not None
+    # Generic parameters keep an AnyPointer in the raw proto even after binding
+    # to a concrete struct. The field schema carries that resolved binding.
+    # For Controller(State) specialized with Msgs.Odometry2D, classify State
+    # using this schema; AnyPointer is not a primitive Python/C++ field type.
+    is_struct = (schema is not None and hasattr(schema, "fields_list")) or (
+        "struct" in plugin_type and plugin_type["struct"] is not None)
     if is_struct:
-        type_id = plugin_type["struct"]["typeId"]
-        type_info = parser.modules_by_id.get(type_id)
-        type_display_name = type_info.schema.node.displayName
+        # modules_by_id indexes Python objects created by SchemaParser.load(),
+        # not every schema loaded by the underlying Cap'n Proto parser. Imported
+        # structs can be resolved in field.schema without a Python module entry.
+        # Use the module table only as a fallback when no field schema is supplied.
+        if schema is None:
+            type_id = plugin_type["struct"]["typeId"]
+            type_info = parser.modules_by_id.get(type_id)
+            schema = getattr(type_info, "schema", None)
+            if schema is None:
+                raise ValueError(f"Cannot resolve Cap'n Proto struct type ID {type_id:#x}")
+        type_display_name = schema.node.displayName
         name = type_display_name.split(':')[-1]
 
         lib_and_file_name = type_display_name.split(':')[0]
@@ -154,11 +162,9 @@ def build_struct_description(msg, struct_node, parser, dependencies) -> StructIn
     fields = []
     for key, value in msg.schema.fields.items():
         field_name = key
-        type_as_dict = value.proto.slot.type.to_dict()
         fields.append(FieldInfo(
             name=field_name,
-            type=parse_capnp_plugin_type_from_type_dict(
-                type_as_dict, parser, dependencies),
+            type=parse_capnp_type_from_param(value, parser, dependencies),
         ))
     return StructInfo(
         name=class_name,
@@ -273,39 +279,47 @@ def parse_capnp_plugin(source_file: Path,
             continue
 
         node = member_field.schema.node
+        # pycapnp nodes are tagged unions. Query their active member instead of
+        # probing union fields with hasattr(), which can suppress valid structs.
         try:
-            is_struct = hasattr(node, "struct")
-            if is_struct:
-                if node.isGeneric:
-                    continue
+            node_kind = node.which()
+        except capnp.KjException:
+            continue
+
+        if node_kind == "struct":
+            if node.isGeneric:
+                continue
+            try:
                 msg = member_field.new_message()
                 struct = build_struct_description(msg, node, parser, dependencies)
-                structs[struct.name] = struct
-            continue
-        except capnp.KjException:
-            pass
-
-        try:
-            is_interface = hasattr(node, "interface")
-            if is_interface:
-                if node.isGeneric:
-                    continue
-                # build interface description
+            except (capnp.KjException, ValueError) as error:
+                return ParsePluginTypeResult(
+                    is_valid=False,
+                    message=f"Failed to describe struct '{node.displayName}': {error}",
+                    data=None,
+                )
+            structs[struct.name] = struct
+        elif node_kind == "interface":
+            if node.isGeneric:
+                continue
+            try:
                 server_instance = member_field.Server()
                 iface_desc = build_interface_description(server_instance, node, parser, dependencies)
                 iface_desc = bind_lifecycle_state(iface_desc, node, loaded)
-                interfaces[iface_desc.name] = iface_desc
-                is_plugin, plugin_name = check_if_capnp_type_is_plugin(member_field)
-                if is_plugin:
-                    plugins.append(PluginTypeMetadata(
-                        type='capnp',
-                        plugin_name=plugin_name,
-                        interface_name=iface_desc.name,
-                    ))
-        except capnp.KjException:
-            pass
-        except ValueError as error:
-            return ParsePluginTypeResult(is_valid=False, message=str(error), data=None)
+            except (capnp.KjException, ValueError) as error:
+                return ParsePluginTypeResult(
+                    is_valid=False,
+                    message=f"Failed to describe interface '{node.displayName}': {error}",
+                    data=None,
+                )
+            interfaces[iface_desc.name] = iface_desc
+            is_plugin, plugin_name = check_if_capnp_type_is_plugin(member_field)
+            if is_plugin:
+                plugins.append(PluginTypeMetadata(
+                    type='capnp',
+                    plugin_name=plugin_name,
+                    interface_name=iface_desc.name,
+                ))
 
     return ParsePluginTypeResult(
         is_valid=True,

@@ -38,6 +38,14 @@ def update_init_file(directory: Path, class_name: str) -> None:
             f.write(line)
 
 
+def ensure_python_package(directory: Path) -> None:
+    """Create a regular package so generated schemas override installed ones."""
+    directory.mkdir(parents=True, exist_ok=True)
+    init_file = directory / "__init__.py"
+    if not init_file.exists():
+        init_file.write_text("# Auto-generated package\n", encoding="utf-8")
+
+
 def parse_field_type(field_type: Dict[str, Any] | TypeInfo,
         library_name: str, imports=None, import_as_private=False) -> str:
 
@@ -45,7 +53,14 @@ def parse_field_type(field_type: Dict[str, Any] | TypeInfo,
         field_type = field_type.as_dict()
     kind = field_type.get("Kind")
     if kind == "primitive":
-        return _PRIMITIVE_TYPE_MAP.get(field_type.get("Name"))[0]
+        type_name = field_type.get("Name")
+        primitive = _PRIMITIVE_TYPE_MAP.get(type_name)
+        if primitive is None:
+            # A bound generic struct must already have been resolved by the
+            # descriptor parser. Report unexpected types (such as AnyPointer)
+            # by name rather than hiding the cause behind a None indexing error.
+            raise ValueError(f"Unsupported primitive type {type_name!r} in Python scaffold")
+        return primitive[0]
     elif kind == "struct":
         splits = field_type.get("CapnpTypeDisplayName", "").split("/")
         if len(splits) == 2:
@@ -75,6 +90,12 @@ def generate_structs(description: PluginTypeInfo, output_path: Path) -> None:
     library_name = description.info["Library"]
     if description.parse_data is None or description.parse_data.structs is None:
         return
+    schema_root = output_path / "python" / "rpp_schema"
+    library_path = schema_root / library_name
+    # Without these initializers, Python may resolve an installed rpp_schema
+    # package first and never search this generated library directory.
+    ensure_python_package(schema_root)
+    ensure_python_package(library_path)
     for struct_name, struct in description.parse_data.structs.items():
         imports = ["from typing import List, Dict, Any, Tuple"]
         field_lines = []
@@ -117,11 +138,9 @@ class {struct_name}:
 
     {field_str}
     '''
-        struct_file_path = output_path / "python" / "rpp_schema" \
-            / library_name / f"{struct_name}.py"
-        if not struct_file_path.parent.exists():
-            struct_file_path.parent.mkdir(parents=True, exist_ok=True)
+        struct_file_path = library_path / f"{struct_name}.py"
         struct_file_path.write_text(content, encoding="utf-8")
+        update_init_file(library_path, struct_name)
 
 def create_method_prototype_string(method: MethodInfo,
         library_name: str, type_aliases=None,
@@ -498,14 +517,23 @@ class {class_name}_AdapterClient({class_name}):
 
         runtime_class = RuntimeConstants.get_capnp_schema().PluginRuntime
         self._runtime_client = self._runtime_client_context.get_client().cast_as(runtime_class)
-        capability = await self._runtime_client.getComponentCapability(
-            self._adapter_client_info.connection_name)
         interface_class = capnp_schema.get_client_class("{plugin_type_name}", "{file_name}")
-        # Cap'n Proto represents an ``AnyPointer`` capability result as a
-        # dynamic object reader. Convert that reader to the concrete
-        # interface first; ``cast_as()`` is only available once it is a
-        # capability client.
-        self._client = capability.pluginRef.as_interface(interface_class)
+        try:
+            capability = await self._runtime_client.getComponentCapability(
+                self._adapter_client_info.connection_name)
+            # Cap'n Proto represents an ``AnyPointer`` capability result as a
+            # dynamic object reader. Convert that reader to the concrete
+            # interface first; ``cast_as()`` is only available once it is a
+            # capability client.
+            self._client = capability.pluginRef.as_interface(interface_class)
+        except capnp.KjException:
+            # Standalone adapter servers expose the typed capability as their
+            # bootstrap interface; component hosts expose PluginRuntime.
+            self._logger.warning(
+                "Runtime capability request failed; using direct adapter client.")
+            self._runtime_client = None
+            self._client = self._runtime_client_context.get_client().cast_as(
+                interface_class)
         return True
 
     def disconnect_adapter_client__(self):

@@ -7,6 +7,10 @@ from PyQt6 import uic, QtCore
 from PyQt6.QtCore import QSignalBlocker
 from rpp_plugin_registrator.plugin_type_registrator import get_plugin_types
 from rpp_plugin_registrator.library_manager import LibraryManager
+from rpp_plugin_registrator.library_registration_status import (
+    compute_library_registration_status,
+)
+from rpp_plugin_registrator.registrator_version import current_registrator_version
 from rpp_plugin_registrator.qt.qt_utils import do_in_thread, open_file_in_editor, open_folder
 
 class NewLibraryDialog(QDialog):
@@ -103,6 +107,7 @@ class RPPPluginManager(QMainWindow):
         self.lib_manager = lib_manager
         self.plugin_type_items = []
         self.init()
+        self.log(f"rpp-plugin-registrator {current_registrator_version()}")
         self.load_plugins()
         self.active_plugins = []
         self.libraryListWidget.setCurrentRow(0)
@@ -166,7 +171,8 @@ class RPPPluginManager(QMainWindow):
             return
         for i in range(self.libraryListWidget.count()):
             item = self.libraryListWidget.item(i)
-            if item.text() == library_name:
+            payload = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if isinstance(payload, dict) and payload.get('Name') == library_name:
                 self.libraryListWidget.setCurrentItem(item)
                 self.libraryListWidget.itemClicked.emit(item)
                 return
@@ -635,8 +641,8 @@ class RPPPluginManager(QMainWindow):
     def get_active_library(self):
         selected_items = self.libraryListWidget.selectedItems()
         if selected_items:
-            item = selected_items[0]
-            return item.text()
+            payload = selected_items[0].data(QtCore.Qt.ItemDataRole.UserRole)
+            return payload.get('Name') if isinstance(payload, dict) else None
         return None
 
     def _collect_plugin_types(self):
@@ -668,7 +674,9 @@ class RPPPluginManager(QMainWindow):
         lib = self.get_active_library()
         if lib is None:
             try:
-                lib = self.libraryListWidget.item(0).text()
+                payload = self.libraryListWidget.item(0).data(
+                    QtCore.Qt.ItemDataRole.UserRole)
+                lib = payload.get('Name') if isinstance(payload, dict) else None
             except Exception:
                 QMessageBox.warning(self,
                     "Warning", "No library selected and no libraries available.")
@@ -706,6 +714,59 @@ class RPPPluginManager(QMainWindow):
             self.refreshBtn.setEnabled(True)
             self.refreshLibraryBtn.setEnabled(True)
             self.unregisterLibraryBtn.setEnabled(True)
+
+        if lib is None:
+            self._clear_library_information()
+            return
+
+        status = compute_library_registration_status(self.lib_manager, lib)
+        self._show_library_information(lib, status)
+        if status.blocking_dependencies:
+            self.refreshLibraryBtn.setEnabled(False)
+
+    def _clear_library_information(self):
+        self.libraryVersionValue.setText("—")
+        self.registeredRegistratorVersionValue.setText("Not registered")
+        self.libraryRefreshStatusValue.setText("No library selected")
+        self._set_library_dependencies([])
+
+    def _show_library_information(self, library_name, status):
+        library = next(entry for entry in self.libraries if entry['Name'] == library_name)
+        self.libraryVersionValue.setText(library.get('Version', '—'))
+        self.registeredRegistratorVersionValue.setText(
+            status.registered_version or "Not registered")
+        blocking_dependencies = status.blocking_dependencies
+        self._set_library_dependencies(status.dependencies, blocking_dependencies)
+        if blocking_dependencies:
+            self.libraryRefreshStatusValue.setText(
+                "Refresh blocked; update marked dependencies first")
+        elif status.update_available:
+            self.libraryRefreshStatusValue.setText("Refresh recommended")
+        elif status.registered_version is None:
+            self.libraryRefreshStatusValue.setText("Refresh to record this version")
+        elif status.registered_version == status.current_version:
+            self.libraryRefreshStatusValue.setText("Current")
+        else:
+            self.libraryRefreshStatusValue.setText("Registered with a newer version")
+
+    def _set_library_dependencies(self, dependencies, blocking_dependencies=()):
+        while self.libraryDependenciesLayout.count():
+            item = self.libraryDependenciesLayout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        blocking = set(blocking_dependencies)
+        names = sorted(set(dependencies) | blocking)
+        if not names:
+            self.libraryDependenciesLayout.addWidget(QLabel("No RPP dependencies"))
+            return
+        for dependency in names:
+            text = dependency
+            if dependency in blocking:
+                text += " — update required"
+            self.libraryDependenciesLayout.addWidget(QLabel(text))
+        self.libraryDependenciesLayout.addStretch()
 
 
     def on_plugin_type_selected(self):

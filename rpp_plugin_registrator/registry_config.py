@@ -19,6 +19,7 @@ LIBRARY_MANIFEST_FILENAME = "manifest.json"
 
 LIBRARY_PLUGINS_KEY = "Plugins"
 LIBRARY_PLUGIN_TYPES_KEY = "PluginTypes"
+LIBRARY_REGISTRATOR_VERSION_KEY = "RegisteredRppPluginRegistratorVersion"
 
 
 
