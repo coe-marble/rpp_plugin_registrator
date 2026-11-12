@@ -177,7 +177,7 @@ python3 rpp_registrator.py generate-interface \
 
 ## C++ compilation
 
-`CPP_BUILD_TYPE=RelWithDebInfo` is the default: validation uses an optimized
+`BUILD_TYPE=RelWithDebInfo` is the default: validation uses an optimized
 plugin with debug symbols for GDB metadata extraction, and registration reuses
 that binary. The GDB helper executable always retains an unoptimized debug build.
 With `Debug`, validation and registration also reuse the same symbol-rich
@@ -186,6 +186,26 @@ Only `Release` uses a separate debug plugin for metadata extraction, then
 recompiles with Release optimization before installation. Plugin types use
 the selected profile directly.
 
-Select a profile with `rpp registry config set CPP_BUILD_TYPE RelWithDebInfo`,
+Select a profile with `rpp registry config set BUILD_TYPE RelWithDebInfo`,
 then re-register the affected libraries. CMake's build type does not control
 registration.
+
+The GUI plugin table has a read-only **Debug** checkbox for each plugin,
+showing whether its recorded `BuildType` is Debug. The tooltip shows the
+registered mode, or Unknown for plugins registered before mode tracking.
+Each language backend decides how to apply the requested mode.
+
+**Register in Debug** selects the mode for individual plugin registration and
+refresh, and for whole-library refresh. It is unchecked by default (Release).
+`refresh_plugin_library(name, build_type="Debug")` similarly applies
+one build type to every plugin; `register_plugin_from_source(path, name,
+build_type="Release")` selects a mode for an individual registration. Build
+choices are passed to registration without changing the global `BUILD_TYPE`.
+
+GUI registration and refresh run in a worker. The log panel receives progress
+through queued Qt signals while management controls are disabled. Compiler
+commands and raw output use DEBUG logging; build failures retain their diagnostic
+details in the log and an error dialog with expandable Details. GUI library
+refresh stops and reports failure when a plugin fails to compile. Scrolling
+and copying the log remain available. Batch operations are
+processed sequentially without a busy-wait loop.

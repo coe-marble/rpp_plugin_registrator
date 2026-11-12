@@ -305,6 +305,16 @@
               </property>
              </widget>
             </item>
+            <item row="5" column="0" colspan="2">
+             <widget class="QCheckBox" name="libraryDebugCheckBox">
+              <property name="text">
+               <string>Register in Debug</string>
+              </property>
+              <property name="toolTip">
+               <string>Checked: refresh every plugin in Debug. Unchecked: Release.</string>
+              </property>
+             </widget>
+            </item>
             <item row="1" column="0">
              <widget class="QPushButton" name="registerPluginBtn">
               <property name="cursor">
@@ -325,7 +335,7 @@
               </property>
              </widget>
             </item>
-            <item row="5" column="0">
+            <item row="6" column="0">
              <spacer name="verticalSpacer">
               <property name="orientation">
                <enum>Qt::Vertical</enum>

@@ -31,7 +31,8 @@ def register_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
         result.register_data = PluginRegisterData(
             plugin_shared_library_path=result.register_data.plugin_shared_library_path,
             plugin_type_shared_library_path=str(shared_lib_path),
-            plugin_metadata=result.register_data.plugin_metadata
+            plugin_metadata=result.register_data.plugin_metadata,
+            build_type=result.register_data.build_type,
         )
     return result
 

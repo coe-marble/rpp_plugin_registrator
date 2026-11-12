@@ -1,7 +1,8 @@
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -31,9 +32,11 @@ def test_compiler_flags_and_profile_marker(monkeypatch, tmp_path, profile, flags
     ("Debug", []),
     ("Release", ["Release"]),
 ])
+@pytest.mark.parametrize("per_plugin", [False, True])
 def test_registration_reuses_symbol_rich_builds_and_recompiles_release(
-        monkeypatch, tmp_path, profile, expected_compiles):
-    monkeypatch.setattr(cpp, "get_setting", lambda name: profile)
+        monkeypatch, tmp_path, profile, expected_compiles, per_plugin):
+    default_profile = ("Debug" if profile != "Debug" else "Release") if per_plugin else profile
+    monkeypatch.setattr(cpp, "get_setting", lambda name: default_profile)
     validation_profile = "RelWithDebInfo" if profile == "RelWithDebInfo" else "Debug"
     staged = tmp_path / "staged"
     staged.mkdir()
@@ -62,11 +65,13 @@ def test_registration_reuses_symbol_rich_builds_and_recompiles_release(
     monkeypatch.setattr(cpp, "extract_plugin_metadata", metadata)
     info = SimpleNamespace(
         info={"SourceFile": "example.hpp", "ClassName": "Example", "Library": "examples"},
+        build_type=profile if per_plugin else None,
         validation_data=SimpleNamespace(plugin_type_library="examples", plugin_type="examples::Type",
                                         plugin_type_class_name="Type"),
     )
     result = cpp.register_cpp_plugin(info)
     assert result.success
+    assert result.register_data.as_dict()["BuildType"] == profile
     assert compiles == expected_compiles
     assert (installed / "Example.so").read_text() == (
         "optimized" if expected_compiles else "validation")
@@ -75,6 +80,53 @@ def test_registration_reuses_symbol_rich_builds_and_recompiles_release(
 def test_directory_without_profile_is_not_reused(tmp_path):
     (tmp_path / "Example.so").write_text("old binary")
     assert not cpp._has_compiled_profile(tmp_path, "Example", "RelWithDebInfo")
+
+
+@pytest.mark.parametrize("language", ["cpp", "python"])
+def test_individual_registration_selects_mode_before_validation_and_remembers_it(tmp_path, language):
+    from rpp_plugin_registrator.library_manager import LibraryManager
+    from rpp_plugin_registrator.plugin_descriptors.core import PluginInfo
+
+    manager = LibraryManager.__new__(LibraryManager)
+    manager._parse_plugin_info_from_file = Mock(side_effect=lambda *args, **kwargs: PluginInfo(
+        info={"ClassName": "Example", "SourceLanguage": language}))
+    manager.load_lib_manifest = Mock(return_value={
+        "Plugins": {"examples::Example": {"BuildType": "Debug"}}})
+    manager._validate_plugin_info = Mock(side_effect=lambda info, *args, **kwargs: info)
+    explicit = manager._prepare_plugin_registration(tmp_path / "example.hpp", "examples",
+                                                    build_type="Release")
+    assert explicit.build_type == "Release"
+    manager.load_lib_manifest.assert_not_called()
+    manager._validate_plugin_info.assert_called_with(explicit, "examples", persist_compiled_files=True)
+    remembered = manager._prepare_plugin_registration(tmp_path / "example.hpp", "examples")
+    assert remembered.build_type == "Debug"
+
+
+def test_library_refresh_applies_one_build_type_to_all_plugins(monkeypatch, tmp_path):
+    import rpp_plugin_registrator.library_manager as library_manager
+
+    (tmp_path / "plugins.json").write_text(json.dumps({
+        "Plugins": [{"Path": "first.hpp"}, {"Path": "second.hpp"}]}))
+    manager = library_manager.LibraryManager.__new__(library_manager.LibraryManager)
+    manager.get_library_path = Mock(return_value=tmp_path)
+    manager.is_valid_plugin_library = Mock(return_value=True)
+    manager._prepare_plugin_registration = Mock()
+    manager.register_plugin = Mock()
+    manager._record_completed_library_registration_version = Mock()
+    manager._iter_registration_files = lambda path, entries, *args: (
+        (path / entry["Path"], entry) for entry in entries)
+    monkeypatch.setattr(library_manager, "compute_library_registration_status",
+        lambda *args: SimpleNamespace(blocking_dependencies=[]))
+    manager.refresh_plugin_library("examples", build_type="Release")
+    assert manager._prepare_plugin_registration.call_count == 2
+    assert all(call.kwargs["build_type"] == "Release"
+               for call in manager._prepare_plugin_registration.call_args_list)
+    manager._record_completed_library_registration_version.reset_mock()
+    manager._prepare_plugin_registration.side_effect = ValueError("compiler failed")
+    with pytest.warns(UserWarning, match="compiler failed"):
+        with pytest.raises(ValueError, match="compiler failed"):
+            manager.refresh_plugin_library("examples", throw=True, build_type="Release")
+    manager._record_completed_library_registration_version.assert_not_called()
 
 
 def test_metadata_failure_preserves_loader_diagnostics_from_gdb_stderr(monkeypatch, tmp_path):
@@ -90,3 +142,34 @@ def test_metadata_failure_preserves_loader_diagnostics_from_gdb_stderr(monkeypat
     )))
     with pytest.raises(RuntimeError, match="libexample.so: cannot open shared object file"):
         cpp.extract_plugin_metadata(tmp_path / "Example.so", "Example")
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+@pytest.mark.parametrize("log_level", [logging.INFO, logging.DEBUG])
+def test_compiler_diagnostics_are_streamed_and_preserved_on_failure(
+        monkeypatch, tmp_path, caplog, returncode, log_level):
+    process = Mock(stdout=iter(["example.hpp: warning: diagnostic\n"]))
+    process.wait.return_value = returncode
+    context = MagicMock()
+    context.__enter__.return_value = process
+    popen = Mock(return_value=context)
+    monkeypatch.setattr(cpp.subprocess, "Popen", popen)
+    run = Mock(side_effect=AssertionError("Compilation should stream rather than capture output"))
+    monkeypatch.setattr(cpp.subprocess, "run", run)
+    caplog.set_level(log_level, logger="rpp_plugin_registrator")
+    handler = logging.NullHandler()
+    cpp.logger.addHandler(handler)
+    try:
+        error, _, _ = cpp._compile_rpp_file(["example.cpp"], tmp_path, [], [], "Example",
+                                           build_type="Debug")
+    finally:
+        cpp.logger.removeHandler(handler)
+    assert "Compiling Example (Debug)" in caplog.text
+    assert ("example.hpp: warning: diagnostic" in caplog.text) is (log_level == logging.DEBUG)
+    assert ("Command:" in caplog.text) is (log_level == logging.DEBUG)
+    assert (tmp_path / "Example.build.json").exists() is (returncode == 0)
+    if returncode:
+        assert "example.hpp: warning: diagnostic" in error
+    else:
+        assert error is None
+    run.assert_not_called()

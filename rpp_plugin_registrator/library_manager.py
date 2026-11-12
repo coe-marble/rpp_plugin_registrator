@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Union
 import json5
 import os, sys
@@ -45,6 +46,8 @@ from rpp_plugin_registrator.registrator_version import (
 from rpp_plugin_registrator.library_registration_status import (
     compute_library_registration_status,
 )
+
+logger = logging.getLogger("rpp_plugin_registrator")
 
 @dataclass
 class LibraryHandle:
@@ -297,6 +300,11 @@ class LibraryManager:
             plugin_name=None, persist_compiled_files=False,
             declared_plugin_type: str | None = None) -> PluginInfo:
         """Get plugin information from a plugin file."""
+        info = self._parse_plugin_info_from_file(plugin_file, plugin_name, declared_plugin_type)
+        return self._validate_plugin_info(info, desired_library, persist_compiled_files)
+
+    def _parse_plugin_info_from_file(self, plugin_file, plugin_name=None,
+            declared_plugin_type=None) -> PluginInfo:
         parse_result = parse_plugin_file(plugin_file)
 
         if not parse_result.is_valid:
@@ -326,9 +334,10 @@ class LibraryManager:
         if declared_plugin_type is not None:
             desc = {**desc, "DeclaredPluginType": declared_plugin_type}
 
-        plugin_info = PluginInfo(
-            info=desc
-        )
+        return PluginInfo(info=desc)
+
+    def _validate_plugin_info(self, plugin_info, desired_library, persist_compiled_files):
+        """Validate the parsed request, retaining its per-registration build choice."""
         plugin_types = ptyp_reg_api.get_plugin_types()
         validation = validate_plugin(plugin_info,
                 plugin_types=plugin_types,
@@ -467,8 +476,10 @@ class LibraryManager:
         return True
 
     # Library Management Methods
-    def refresh_plugin_library(self, lib_name, throw=True):
-        """Refresh a plugin library's manifest."""
+    def refresh_plugin_library(self, lib_name, throw=True, *, build_type: str | None = None):
+        """Refresh every plugin with the same requested build type."""
+        build_type = build_type or rp.get_setting("BUILD_TYPE")
+        logger.info("Refreshing library %s (%s)", lib_name, build_type)
         path = self.get_library_path(lib_name)
         if not self.is_valid_plugin_library(path):
             raise ValueError(f"Library '{lib_name}' is not a valid library")
@@ -491,6 +502,7 @@ class LibraryManager:
         exts = get_supported_plugin_type_extensions()
         for plugin_type_path, _ in self._iter_registration_files(path,
                 plugins.get(LIBRARY_PLUGIN_TYPES_KEY, []), exts, "Plugin type"):
+            logger.info("Registering plugin type from %s", plugin_type_path)
             infos = ptyp_reg_api.register_plugin_type_from_source(plugin_type_path, lib_name, override=True)
             self.add_to_manifest(lib_name, plugin_type_or_list=infos)
 
@@ -498,13 +510,15 @@ class LibraryManager:
         for comp_path, comp_entry in self._iter_registration_files(path,
                 plugins.get(LIBRARY_PLUGINS_KEY, []), exts, "Plugin"):
             try:
-                comp_info = self.get_plugin_info_from_file(
+                logger.info("Preparing plugin from %s (%s)", comp_path, build_type)
+                comp_info = self._prepare_plugin_registration(
                     comp_path,
                     lib_name,
-                    persist_compiled_files=True,
                     declared_plugin_type=comp_entry.get("PluginType"),
+                    build_type=build_type,
                 )
             except Exception as e:
+                logger.warning("Failed to prepare plugin %s: %s", comp_path, e)
                 warnings.warn(f"Failed to get plugin info from '{comp_path}': {e}")
                 if throw:
                     raise e
@@ -512,6 +526,7 @@ class LibraryManager:
             self.register_plugin(comp_info, lib_name, append_to_json=False, append_to_manifest=True)
 
         self._record_completed_library_registration_version(path)
+        logger.info("Finished refreshing library %s", lib_name)
 
     def register_plugin_library(self, path, link_register=False):
         """Register a plugin library."""
@@ -602,9 +617,11 @@ class LibraryManager:
         return self._filter_by_source_language(plugin_types, source_language)
 
     # Plugin Registration Methods
-    def register_plugin_from_source(self, plugin_file:Union[str, Path], lib_name:str):
+    def register_plugin_from_source(self, plugin_file:Union[str, Path], lib_name:str,
+            *, build_type: str | None = None):
         """Register a plugin from a file."""
         plugin_file = Path(plugin_file).resolve()
+        logger.info("Preparing plugin from %s", plugin_file)
         if not self.is_supported_plugin_file(plugin_file):
             raise ValueError(f"File '{plugin_file}' is not a supported plugin file.")
         path = self.get_library_path(lib_name)
@@ -613,8 +630,20 @@ class LibraryManager:
         # Plugin_file must be in the library context
         if not plugin_file.is_relative_to(path):
             raise ValueError(f"File '{plugin_file}' is not in the library context '{path}'.")
-        info = self.get_plugin_info_from_file(plugin_file, lib_name, persist_compiled_files=True)
+        info = self._prepare_plugin_registration(plugin_file, lib_name, build_type=build_type)
         return self.register_plugin(info, lib_name)
+
+    def _prepare_plugin_registration(self, plugin_file, lib_name, *, build_type=None,
+            declared_plugin_type=None):
+        """Choose the build mode before validation so registration can reuse its binary."""
+        info = self._parse_plugin_info_from_file(plugin_file,
+                                                 declared_plugin_type=declared_plugin_type)
+        if build_type is None:
+            registered = self._manifest_plugins(self.load_lib_manifest(lib_name))
+            name = f"{lib_name}::{info.info['ClassName']}"
+            build_type = registered.get(name, {}).get("BuildType")
+        info.build_type = build_type
+        return self._validate_plugin_info(info, lib_name, persist_compiled_files=True)
 
     def register_plugin(self, plugin_info: PluginInfo, lib_name: str, append_to_json=True, append_to_manifest=True):
         """Register a plugin in a library."""
@@ -624,6 +653,7 @@ class LibraryManager:
             raise ValueError(f"Library '{lib_name}' is not a valid library")
 
         plugin_info.info = apply_library_context_to_plugin(plugin_info.info, lib_name)
+        logger.info("Registering plugin %s", plugin_info.info["PluginName"])
 
         registration_result = p_reg_api.register_plugin(plugin_info)
         if not registration_result.success:
@@ -639,6 +669,7 @@ class LibraryManager:
         is_casadi = bool(desc.get("IsCasadi", False))
 
         validation_data = plugin_info.validation_data
+        build_type = plugin_info.build_type
 
         plugin_info = build_plugin_info_payload(
             name=desc["Name"],
@@ -654,6 +685,8 @@ class LibraryManager:
             plugin_info = {**plugin_info, **validation_data.as_dict()}
         if registration_result.register_data is not None:
             plugin_info = {**plugin_info, **registration_result.register_data.as_dict()}
+        if build_type is not None:
+            plugin_info["BuildType"] = build_type
 
         metadata_files = []
         if append_to_json:
@@ -700,6 +733,8 @@ class LibraryManager:
                     plugin_info['PluginName'])
                 write_json(plugin_path, plugin_info, indent=2, sort_keys=False)
                 self.add_to_manifest(lib_name, plugin_or_list=plugin_info)
+        logger.info("Registered plugin %s (%s)", plugin_info["PluginName"],
+                    plugin_info.get("BuildType", plugin_info["SourceLanguage"]))
         return plugin_info
 
     def load_lib_manifest(self, lib_path):

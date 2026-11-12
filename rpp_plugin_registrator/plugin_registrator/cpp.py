@@ -1,5 +1,6 @@
 
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -7,6 +8,8 @@ from typing import Dict, Any, List, Optional, Tuple
 import shutil
 import sys
 import subprocess
+
+logger = logging.getLogger("rpp_plugin_registrator")
 
 from rpp_plugin_registrator.registry_config import (
     get_app_interfaces_path,
@@ -62,7 +65,7 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
         suppress_warnings: bool = True, as_shared_lib: bool = True,
         print_to_console: bool = False, verbose: bool = False,
         build_type: Optional[str] = None) -> Tuple[Optional[str], List[str], Path]:
-    build_type = build_type or get_setting("CPP_BUILD_TYPE")
+    build_type = build_type or get_setting("BUILD_TYPE")
     if sys.platform.startswith("win"):
         build_profiles = {
             "Debug": ["/Od", "/Z7"],
@@ -76,7 +79,7 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
             "RelWithDebInfo": ["-O2", "-g", "-DNDEBUG"],
         }
     if build_type not in build_profiles:
-        raise ValueError("CPP_BUILD_TYPE must be Debug, Release, or RelWithDebInfo")
+        raise ValueError("BUILD_TYPE must be Debug, Release, or RelWithDebInfo")
     build_flags = build_profiles[build_type]
     try:
         warning_flags = ["-Wno-unused-variable"] if suppress_warnings else []
@@ -102,8 +105,24 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
 
         if verbose:
             print(f"Full compile command:\n{' '.join(compile_cmd)}\n\n")
+        logger.info("Compiling %s (%s)", class_name, build_type)
         if print_to_console:
             result = subprocess.run(compile_cmd, check=True)
+        elif logger.handlers:
+            # GUI logging is opt-in. Read diagnostics as they arrive instead of
+            # withholding compiler output until a potentially long build ends.
+            logger.debug("Command: %s", subprocess.list2cmdline(compile_cmd))
+            output = []
+            with subprocess.Popen(compile_cmd, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True, bufsize=1) as process:
+                for line in process.stdout:
+                    output.append(line)
+                    logger.debug("%s", line.rstrip())
+                returncode = process.wait()
+            if returncode:
+                raise subprocess.CalledProcessError(returncode, compile_cmd,
+                    stderr="".join(output).encode())
+            result = subprocess.CompletedProcess(compile_cmd, returncode, stderr=b"")
         else:
             result = subprocess.run(compile_cmd, check=True, \
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -118,6 +137,7 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
     if as_shared_lib:
         (out_dir / f"{class_name}.build.json").write_text(
             json.dumps({"build_type": build_type}), encoding="utf-8")
+    logger.info("Compiled %s (%s)", class_name, build_type)
     return None, compile_cmd, out_file_path
 
 
@@ -198,11 +218,11 @@ def compile_cpp_plugin(source_file: PluginInfo,
         build_type=build_type
     )
 
-def validation_build_type() -> str:
+def validation_build_type(build_type: Optional[str] = None) -> str:
     # GDB reads type information from the plugin, even for a Release install.
-    requested = get_setting("CPP_BUILD_TYPE")
+    requested = build_type if build_type is not None else get_setting("BUILD_TYPE")
     if requested not in {"Debug", "Release", "RelWithDebInfo"}:
-        raise ValueError("CPP_BUILD_TYPE must be Debug, Release, or RelWithDebInfo")
+        raise ValueError("BUILD_TYPE must be Debug, Release, or RelWithDebInfo")
     return "Debug" if requested == "Release" else requested
 
 
@@ -228,7 +248,8 @@ def register_cpp_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
     class_name = description.get("ClassName")
     library = description.get("Library")
     tmp_out_dir = get_tmp_dir_for_compilation(source_file, class_name)
-    validation_profile = validation_build_type()
+    requested_profile = plugin_info.build_type or get_setting("BUILD_TYPE")
+    validation_profile = validation_build_type(requested_profile)
     if not _has_compiled_profile(tmp_out_dir, class_name, validation_profile):
         tmp_out_dir.mkdir(parents=True, exist_ok=True)
         plugin_type_library = plugin_info.validation_data.plugin_type_library
@@ -254,7 +275,7 @@ def register_cpp_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
     metadata = extract_plugin_metadata(shared_lib_path, class_name)
     # Debug and RelWithDebInfo already have usable symbols and can be reused.
     # Release needs a separate final build after metadata extraction.
-    if get_setting("CPP_BUILD_TYPE") == "Release":
+    if requested_profile == "Release":
         compile_error, compile_cmd, _ = compile_cpp_plugin(
             source_file=source_file,
             library_name=library,
@@ -284,7 +305,8 @@ def register_cpp_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
         register_data=PluginRegisterData(
             plugin_shared_library_path=str(dest_path_relative),
             plugin_type_shared_library_path=str(plugin_type_shared_lib_path),
-            plugin_metadata=metadata
+            plugin_metadata=metadata,
+            build_type=requested_profile,
         )
     )
 
@@ -315,7 +337,7 @@ def generate_cpp_plugin_interface(plugin_type_info: PluginTypeInfo) -> None:
     hpp_source_file = get_app_interfaces_path() / "cpp" / "rpp_plugin_types" / lib_name / f"{class_name}.hpp"
     tmp_out_dir = get_tmp_dir_for_compilation(hpp_source_file, class_name)
     validation_build_type()  # Validate the requested setting before compilation.
-    registration_profile = get_setting("CPP_BUILD_TYPE")
+    registration_profile = get_setting("BUILD_TYPE")
     if not _has_compiled_profile(tmp_out_dir, class_name, registration_profile):
         tmp_out_dir.mkdir(parents=True, exist_ok=True)
         compile_error, compile_cmd, _ = compile_cpp_plugin_type(
@@ -407,6 +429,7 @@ def get_cpp_plugin_info_string_from_debug_symbols(
             + f"Error: {compile_error}")
 
     gdb_cmd = ["gdb", "-batch", "-x", str(gdb_source_file)]
+    logger.info("Inspecting %s metadata with GDB", class_name)
     gdb_env = os.environ.copy()
     rpp_cpp_core_path = get_setting("RPP_CPP_CORE_PATH")
     if rpp_cpp_core_path:
@@ -424,6 +447,7 @@ def get_cpp_plugin_info_string_from_debug_symbols(
         output = result.stdout.decode()
         if result.stderr:
             output += "\n" + result.stderr.decode()
+        logger.info("Finished GDB inspection of %s", class_name)
     except Exception as e:
         full_command = " ".join(gdb_cmd)
         raise RuntimeError(

@@ -87,7 +87,7 @@ def validate_cpp_plugin(desc: PluginInfo, plugin_types: Dict[str, PluginTypeInfo
             out_dir=tmp_out_dir,
             class_name=class_name,
             suppress_warnings=suppress_warnings,
-            build_type=validation_build_type()
+            build_type=validation_build_type(desc.build_type)
         )
         if compile_error:
             if tmp_out_dir.exists():

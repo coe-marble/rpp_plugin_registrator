@@ -112,7 +112,7 @@ def build_library_manifest_plugin_type_entry(
 def build_library_manifest_plugin_entry(
     plugin: Dict[str, Any]
 ) -> Dict[str, Any]:
-    return {
+    entry = {
         "Name": plugin["Name"],
         "PluginName": plugin["PluginName"],
         "PluginType": plugin["PluginType"],
@@ -123,6 +123,9 @@ def build_library_manifest_plugin_entry(
         "IsCasadi": plugin["IsCasadi"],
         "SourceLanguage": plugin["SourceLanguage"],
     }
+    if plugin.get("BuildType") is not None:
+        entry["BuildType"] = plugin["BuildType"]
+    return entry
 
 
 

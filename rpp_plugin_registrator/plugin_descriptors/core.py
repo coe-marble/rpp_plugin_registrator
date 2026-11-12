@@ -90,13 +90,17 @@ class PluginRegisterData:
     plugin_shared_library_path: str
     plugin_type_shared_library_path: str
     plugin_metadata: dict
+    build_type: str | None = None
 
     def as_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "PluginSharedLibraryPath": self.plugin_shared_library_path,
             "PluginTypeSharedLibraryPath": self.plugin_type_shared_library_path,
             "PluginMetadata": self.plugin_metadata
         }
+        if self.build_type is not None:
+            data["BuildType"] = self.build_type
+        return data
 
 @dataclass(frozen=True)
 class PluginTypeValidationData:
@@ -216,6 +220,7 @@ class PluginInfo:
     parse_data: ParsePluginData | None = None
     validation_data: PluginValidationData | None = None
     register_data: PluginRegisterData | None = None
+    build_type: str | None = None
 
 
 def plugin_id_from_name(plugin_name: str) -> str:

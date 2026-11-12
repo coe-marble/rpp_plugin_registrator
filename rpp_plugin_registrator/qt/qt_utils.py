@@ -44,11 +44,29 @@ def open_file_in_editor(path, editor=DEFAULT_EDITOR):
 
 
 def do_in_thread(parent, func, on_finish):
-    from csb_qt.worker_thread import WorkerThread
-    parent.t = WorkerThread(parent, func)
-    def on_finish_wrapper(*args):
-        parent.setEnabled(True)
-        on_finish(*args)
-    parent.t.finished.connect(on_finish_wrapper)
-    parent.t.start()
-    parent.setEnabled(False)
+    from PyQt6.QtCore import QObject, QThread, Qt, pyqtSlot
+
+    class WorkerThread(QThread):
+        def run(self):
+            self.result, self.error = None, None
+            try:
+                self.result = func()
+            except Exception as error:
+                self.error = error
+
+    class Completion(QObject):
+        @pyqtSlot()
+        def finish(self):
+            # This object belongs to the GUI thread. Wait for QThread.finished
+            # before releasing the worker or starting another operation.
+            try:
+                on_finish(worker.result, worker.error)
+            finally:
+                worker.deleteLater()
+                self.deleteLater()
+
+    worker = WorkerThread(parent)
+    completion = Completion(parent)
+    worker.finished.connect(completion.finish, Qt.ConnectionType.QueuedConnection)
+    worker.start()
+    return worker

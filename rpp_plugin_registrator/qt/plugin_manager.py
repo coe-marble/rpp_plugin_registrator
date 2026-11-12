@@ -1,10 +1,13 @@
 import os
+import logging
+from collections import deque
 from datetime import datetime
 import shutil
 from pathlib import Path
 from PyQt6.QtWidgets import *
 from PyQt6 import uic, QtCore
 from PyQt6.QtCore import QSignalBlocker
+from PyQt6.QtGui import QTextCursor
 from rpp_plugin_registrator.plugin_type_registrator import get_plugin_types
 from rpp_plugin_registrator.library_manager import LibraryManager
 from rpp_plugin_registrator.library_registration_status import (
@@ -12,6 +15,15 @@ from rpp_plugin_registrator.library_registration_status import (
 )
 from rpp_plugin_registrator.registrator_version import current_registrator_version
 from rpp_plugin_registrator.qt.qt_utils import do_in_thread, open_file_in_editor, open_folder
+
+
+class _GuiLogHandler(logging.Handler):
+    def __init__(self, send_message):
+        super().__init__(logging.INFO)
+        self.send_message = send_message
+
+    def emit(self, record):
+        self.send_message(self.format(record))
 
 class NewLibraryDialog(QDialog):
     def __init__(self, parent=None, title="Enter values"):
@@ -71,6 +83,7 @@ class NewLibraryDialog(QDialog):
         return [self.le.text(), self.is_linked.isChecked(), self.link_path.text()]
 
 class RPPPluginManager(QMainWindow):
+    log_received = QtCore.pyqtSignal(str)
 
     def eventFilter(self, source, event):
         if event.type() != event.Type.MouseButtonPress:
@@ -106,12 +119,19 @@ class RPPPluginManager(QMainWindow):
         uic.loadUi(os.path.join(self.ui_path, 'plugin_manager.ui'), self)
         self.lib_manager = lib_manager
         self.plugin_type_items = []
+        self.do_in_progress = False
+        self._pending_operations = deque()
+        self.log_received.connect(self.log, QtCore.Qt.ConnectionType.QueuedConnection)
+        self._registration_logger = logging.getLogger("rpp_plugin_registrator")
+        self._previous_log_level = self._registration_logger.level
+        self._log_handler = _GuiLogHandler(self.log_received.emit)
+        self._registration_logger.addHandler(self._log_handler)
+        self._registration_logger.setLevel(logging.INFO)
         self.init()
         self.log(f"rpp-plugin-registrator {current_registrator_version()}")
         self.load_plugins()
         self.active_plugins = []
         self.libraryListWidget.setCurrentRow(0)
-        self.do_in_progress = False
 
         self.selected_item_type = None
         self._reset_views()
@@ -145,9 +165,9 @@ class RPPPluginManager(QMainWindow):
 
     def _init_plugin_table(self):
         self.pluginTableWidget = QTableWidget(self)
-        self.pluginTableWidget.setColumnCount(5)
+        self.pluginTableWidget.setColumnCount(6)
         self.pluginTableWidget.setHorizontalHeaderLabels(
-            ["Name", "Plugin Name", "Plugin Type", "Library", "Description"])
+            ["Name", "Plugin Name", "Plugin Type", "Library", "Debug", "Description"])
         self.pluginTableWidget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.pluginTableWidget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.pluginTableWidget.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -239,38 +259,47 @@ class RPPPluginManager(QMainWindow):
 
 
     def refresh_plugin_table(self):
-        current_lib = self.get_active_library()
-        if current_lib is None:
-            self.pluginTableWidget.setRowCount(0)
-            return
-        plugins = self.plugins.get(current_lib, [])
+        with QSignalBlocker(self.pluginTableWidget):
+            current_lib = self.get_active_library()
+            if current_lib is None:
+                self.pluginTableWidget.setRowCount(0)
+                return
+            plugins = self.plugins.get(current_lib, [])
 
-        total_count = sum(len(plugins_of_type) for plugins_of_type in plugins.values())
-        self.pluginTableWidget.setRowCount(total_count)
-        row = 0
+            total_count = sum(len(plugins_of_type) for plugins_of_type in plugins.values())
+            self.pluginTableWidget.setRowCount(total_count)
+            row = 0
 
-        plugins_sorted = sorted(
-            [(plugin_type, plugins_of_type) for plugin_type, plugins_of_type in plugins.items()],
-            key=lambda x: x[0]
-        )
-        for plugin_type, plugins_of_type in plugins_sorted:
-            for plugin in plugins_of_type:
-                name_item = QTableWidgetItem(plugin.get("Name", ""))
-                type_item = QTableWidgetItem(plugin.get("PluginType", ""))
-                plugin_name_item = QTableWidgetItem(plugin.get("PluginName", ""))
-                lib_item = QTableWidgetItem(plugin.get("Library", ""))
-                desc_item = QTableWidgetItem(plugin.get("Description", ""))
-                self.pluginTableWidget.setItem(row, 0, name_item)
-                self.pluginTableWidget.setItem(row, 1, plugin_name_item)
-                self.pluginTableWidget.setItem(row, 2, type_item)
-                self.pluginTableWidget.setItem(row, 3, lib_item)
-                self.pluginTableWidget.setItem(row, 4, desc_item)
-                # store plugin data in the first column item
-                name_item.setData(QtCore.Qt.ItemDataRole.UserRole, plugin)
-                row += 1
+            plugins_sorted = sorted(
+                [(plugin_type, plugins_of_type) for plugin_type, plugins_of_type in plugins.items()],
+                key=lambda x: x[0]
+            )
+            for plugin_type, plugins_of_type in plugins_sorted:
+                for plugin in plugins_of_type:
+                    name_item = QTableWidgetItem(plugin.get("Name", ""))
+                    type_item = QTableWidgetItem(plugin.get("PluginType", ""))
+                    plugin_name_item = QTableWidgetItem(plugin.get("PluginName", ""))
+                    lib_item = QTableWidgetItem(plugin.get("Library", ""))
+                    desc_item = QTableWidgetItem(plugin.get("Description", ""))
+                    debug_item = QTableWidgetItem()
+                    build_type = plugin.get("BuildType")
+                    debug_item.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled |
+                        QtCore.Qt.ItemFlag.ItemIsSelectable)
+                    debug_item.setCheckState(QtCore.Qt.CheckState.Checked if build_type == "Debug"
+                                            else QtCore.Qt.CheckState.Unchecked)
+                    debug_item.setToolTip(f"Registered build type: {build_type or 'Unknown'}")
+                    self.pluginTableWidget.setItem(row, 0, name_item)
+                    self.pluginTableWidget.setItem(row, 1, plugin_name_item)
+                    self.pluginTableWidget.setItem(row, 2, type_item)
+                    self.pluginTableWidget.setItem(row, 3, lib_item)
+                    self.pluginTableWidget.setItem(row, 4, debug_item)
+                    self.pluginTableWidget.setItem(row, 5, desc_item)
+                    # store plugin data in the first column item
+                    name_item.setData(QtCore.Qt.ItemDataRole.UserRole, plugin)
+                    row += 1
 
-        self.pluginTableWidget.resizeColumnsToContents()
-        self.pluginTableWidget.resizeRowsToContents()
+            self.pluginTableWidget.resizeColumnsToContents()
+            self.pluginTableWidget.resizeRowsToContents()
 
     def ask_library_path(self):
         library_folder = QFileDialog.getExistingDirectory(self, "Select Library Directory", "")
@@ -279,21 +308,18 @@ class RPPPluginManager(QMainWindow):
             return None
         return library_folder
 
+    @QtCore.pyqtSlot(str)
     def log(self, msg):
         t_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        max_lines = 1000
-        cursor = self.logTxt.textCursor()
-        if self.logTxt.document().blockCount() > max_lines:
-            # clear last 100 lines
-            cursor.movePosition(cursor.End)
-            for _ in range(100):
-                cursor.select(cursor.LineUnderCursor)
-                cursor.removeSelectedText()
-                cursor.deleteChar()
-            self.logTxt.setTextCursor(cursor)
-        cursor.setPosition(0)
-        self.logTxt.setTextCursor(cursor)
-        self.logTxt.insertPlainText(f"[{t_now}] {msg}\n")
+        scrollbar = self.logTxt.verticalScrollBar()
+        follow_output = scrollbar.value() == scrollbar.maximum()
+        document = self.logTxt.document()
+        document.setMaximumBlockCount(1000)
+        cursor = QTextCursor(document)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(f"[{t_now}] {msg}\n")
+        if follow_output:
+            scrollbar.setValue(scrollbar.maximum())
 
 
     def register_plugin_library(self, path=None, link_install=False):
@@ -390,18 +416,18 @@ class RPPPluginManager(QMainWindow):
             QMessageBox.warning(self, "Warning", "No library selected.")
             return
         self.log(f"Refreshing library '{lib}'. This may take a few moments...")
+        build_type = "Debug" if self.libraryDebugCheckBox.isChecked() else "Release"
 
         def on_finish(result, error):
             if error is not None:
                 self.log(f"Failed to refresh library '{lib}':\n{error}")
                 return
-            self.log(f"Library '{lib}' refreshed.")
+            self.log(f"Library '{lib}' refreshed ({build_type}).")
             self.load_plugins()
             self.select_library(lib)
 
         def run():
-            QApplication.instance().processEvents()
-            self.lib_manager.refresh_plugin_library(lib, throw=False)
+            self.lib_manager.refresh_plugin_library(lib, throw=True, build_type=build_type)
 
         self._do_fn(run, on_finish)
 
@@ -412,7 +438,7 @@ class RPPPluginManager(QMainWindow):
             if not selected_items:
                 QMessageBox.warning(self, "Warning", "No plugin selected.")
                 return
-            name_item = selected_items[0]
+            name_item = self.pluginTableWidget.item(selected_items[0].row(), 0)
             plugin = name_item.data(QtCore.Qt.ItemDataRole.UserRole)
             if plugin is None:
                 QMessageBox.warning(self, "Warning", "No plugin selected.")
@@ -427,9 +453,11 @@ class RPPPluginManager(QMainWindow):
             QMessageBox.warning(self, "Warning", "Plugin library not found.")
             return
         lib_path = self.get_library_path_with_checks(lib)
+        build_type = "Debug" if self.libraryDebugCheckBox.isChecked() else "Release"
 
         self.log(f"Refreshing plugin '{plugin.get('PluginName', '')}'"
-            + f" in library '{lib}'. This may take a few moments...")
+            + f" in library '{lib}'" + (f" ({build_type})" if build_type else "")
+            + ". This may take a few moments...")
 
         def on_finish(result, error):
             if self.selected_item_type == "plugin":
@@ -444,13 +472,8 @@ class RPPPluginManager(QMainWindow):
             self.select_plugin(plugin.get("PluginName", ""))
 
         def run():
-            if self.selected_item_type == "plugin":
-                self.lib_manager.unregister_plugin(plugin.get("PluginName", ""),
-                    remove_from_json=False, throw_if_not_found=False)
-                full_path = Path(lib_path) / plugin.get("SourceFile", "")
-                self.lib_manager.register_plugin_from_source(full_path, lib)
-                self.select_library(lib)
-                self.select_plugin(plugin.get("PluginName", ""))
+            full_path = Path(lib_path) / plugin.get("SourceFile", "")
+            return self.lib_manager.register_plugin_from_source(full_path, lib, build_type=build_type)
         self._do_fn(run, on_finish)
 
 
@@ -543,8 +566,10 @@ class RPPPluginManager(QMainWindow):
             self.log(f"Unsupported plugin file type: '{file_path}'.")
             return
 
+        build_type = "Debug" if self.libraryDebugCheckBox.isChecked() else "Release"
+
         def run():
-            return self.lib_manager.register_plugin_from_source(full_plugin_path, lib)
+            return self.lib_manager.register_plugin_from_source(full_plugin_path, lib, build_type=build_type)
 
         self.log(f"Registering plugin from '{file_path}' to library '{lib}'. This may take a few moments...")
         def on_finish(result, error):
@@ -562,23 +587,57 @@ class RPPPluginManager(QMainWindow):
         self._do_fn(run, on_finish)
 
     def _do_fn(self, fn, on_finish):
+        if self.do_in_progress:
+            self._pending_operations.append((fn, on_finish))
+            self.log("Operation queued until the current registration finishes.")
+            return
 
-        while self.do_in_progress:
-            QApplication.instance().processEvents()
+        self.do_in_progress = True
+        controls = [*self.findChildren(QPushButton), self.libraryListWidget,
+                    self.pluginTableWidget, self.pluginTypesTreeView, self.libraryDebugCheckBox]
+        enabled_states = [(control, control.isEnabled()) for control in controls]
+        for control, _ in enabled_states:
+            control.setEnabled(False)
+        self.statusBar().showMessage("Registration in progress…")
 
-        if self.lib_manager.is_long_library_management:
-            self.do_in_progress = True
-            def on_finish_wrapper(result, error):
-                self.do_in_progress = False
-                on_finish(result, error)
-            do_in_thread(self, fn, on_finish_wrapper)
-        else:
+        def on_finish_wrapper(result, error):
+            # do_in_thread delivers this callback on the GUI thread.
+            self.do_in_progress = False
+            for control, enabled in enabled_states:
+                control.setEnabled(enabled)
+            if error is None:
+                self.statusBar().clearMessage()
+            else:
+                self.statusBar().showMessage("Registration failed")
             try:
-                result = fn()
-                on_finish(result, None)
-            except Exception as e:
-                on_finish(None, e)
-        self.do_in_progress = False
+                on_finish(result, error)
+                if error is not None:
+                    dialog = QMessageBox(self)
+                    dialog.setIcon(QMessageBox.Icon.Critical)
+                    dialog.setWindowTitle("Registration failed")
+                    dialog.setText("Registration or refresh failed.")
+                    dialog.setInformativeText("Open Details for the error diagnostics. They are also available in the log.")
+                    dialog.setDetailedText(str(error))
+                    dialog.exec()
+            except Exception as callback_error:
+                self.log(f"Failed to update the registration view: {callback_error}")
+            finally:
+                if self._pending_operations:
+                    self._do_fn(*self._pending_operations.popleft())
+
+        try:
+            self.t = do_in_thread(self, fn, on_finish_wrapper)
+        except Exception as error:
+            on_finish_wrapper(None, error)
+
+    def closeEvent(self, event):
+        if self.do_in_progress:
+            self.log("Wait for the current registration to finish before closing.")
+            event.ignore()
+            return
+        self._registration_logger.removeHandler(self._log_handler)
+        self._registration_logger.setLevel(self._previous_log_level)
+        super().closeEvent(event)
 
     def unregister_plugin_or_type(self):
         lib = self.get_active_library()
