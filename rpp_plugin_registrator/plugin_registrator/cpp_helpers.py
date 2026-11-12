@@ -116,6 +116,19 @@ def get_rpp_cpp_shared_libraries() -> Tuple[str, List[str]]:
         raise ValueError("RPP_CPP_CORE_PATH environment variable is not set and USE_ROS2_COMPILATION is not set.")
 
 
+def parse_version(version: Optional[str]) -> Tuple[int, int, int]:
+    """Parse `x.y.z`, or `x.y` as `x.y.0`. A missing version is `0.0.0`."""
+    if not version:
+        return (0, 0, 0)
+    parts = version.split(".")
+    if len(parts) not in (2, 3) or not all(part.isdecimal() for part in parts):
+        raise ValueError(
+            f"Invalid version '{version}': expected 'x.y.z' or 'x.y' with "
+            "numeric parts.")
+    major, minor, patch = (int(part) for part in parts + ["0"] * (3 - len(parts)))
+    return major, minor, patch
+
+
 def get_cpp_imports_and_libraries_for_library(
         library_name: str) -> Tuple[List[str], List[str], List[str]]:
 
@@ -188,11 +201,8 @@ def get_cpp_imports_and_libraries_for_library(
     def is_dependency_satisfied(
             dep_operator: str, dep_version: str, lib: Dict[str, str]) -> bool:
         if dep_operator and dep_version:
-            lib_version = lib.get("Version")
-            lib_major, lib_minor, lib_patch = \
-                (int(x) for x in lib_version.split(".")) if lib_version else (0, 0, 0)
-            dep_major, dep_minor, dep_patch = \
-                (int(x) for x in dep_version.split(".")) if dep_version else (0, 0, 0)
+            lib_major, lib_minor, lib_patch = parse_version(lib.get("Version"))
+            dep_major, dep_minor, dep_patch = parse_version(dep_version)
             return check_dependency(lib_major, lib_minor, \
                 lib_patch, dep_major, dep_minor, dep_patch, dep_operator)
         return True
