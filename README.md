@@ -174,3 +174,18 @@ python3 rpp_registrator.py generate-interface \
 - C++ extraction is heuristic and expects plugins similar to `rpp::Plugin` implementations in `rpp_core`.
 - Python extraction expects a class deriving from `Plugin`.
 - The registry file is upsert-based: registering the same `plugin.id` replaces the previous entry.
+
+## C++ compilation
+
+`CPP_BUILD_TYPE=RelWithDebInfo` is the default: validation uses an optimized
+plugin with debug symbols for GDB metadata extraction, and registration reuses
+that binary. The GDB helper executable always retains an unoptimized debug build.
+With `Debug`, validation and registration also reuse the same symbol-rich
+binary, preserving the explicit request for an unoptimized debug build.
+Only `Release` uses a separate debug plugin for metadata extraction, then
+recompiles with Release optimization before installation. Plugin types use
+the selected profile directly.
+
+Select a profile with `rpp registry config set CPP_BUILD_TYPE RelWithDebInfo`,
+then re-register the affected libraries. CMake's build type does not control
+registration.

@@ -60,12 +60,30 @@ def wrap_cpp_source_to_plugin_structure(source_file: str,
 def _compile_rpp_file(source_files: List[str], out_dir: Path,
         import_flags: List[str],  linked_libs: List[str], class_name: str,
         suppress_warnings: bool = True, as_shared_lib: bool = True,
-        print_to_console: bool = False, verbose: bool = False) -> Tuple[Optional[str], List[str], Path]:
+        print_to_console: bool = False, verbose: bool = False,
+        build_type: Optional[str] = None) -> Tuple[Optional[str], List[str], Path]:
+    build_type = build_type or get_setting("CPP_BUILD_TYPE")
+    if sys.platform.startswith("win"):
+        build_profiles = {
+            "Debug": ["/Od", "/Z7"],
+            "Release": ["/O2", "/DNDEBUG"],
+            "RelWithDebInfo": ["/O2", "/Z7", "/DNDEBUG"],
+        }
+    else:
+        build_profiles = {
+            "Debug": ["-O0", "-g"],
+            "Release": ["-O2", "-DNDEBUG"],
+            "RelWithDebInfo": ["-O2", "-g", "-DNDEBUG"],
+        }
+    if build_type not in build_profiles:
+        raise ValueError("CPP_BUILD_TYPE must be Debug, Release, or RelWithDebInfo")
+    build_flags = build_profiles[build_type]
     try:
         warning_flags = ["-Wno-unused-variable"] if suppress_warnings else []
         source_file = source_files[0]  # Assuming the first source file is the main one
         shared_lib_flags = []
         if as_shared_lib:
+            (out_dir / f"{class_name}.build.json").unlink(missing_ok=True)
             out_file_path = out_dir / f"{class_name}.so"
             if sys.platform.startswith("win"):
                 shared_lib_flags = ["/LD", "/nologo", "/EHsc"]
@@ -76,10 +94,10 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
 
         out_file_flag = ["-o", str(out_file_path)]
         if sys.platform.startswith("win"):
-            compile_cmd = ["cl", "/Z7"] + shared_lib_flags \
+            compile_cmd = ["cl"] + build_flags + shared_lib_flags \
                     + import_flags + warning_flags + out_file_flag + source_files + linked_libs
         else:
-            compile_cmd = ["g++", "-std=c++17", "-g"] + shared_lib_flags \
+            compile_cmd = ["g++", "-std=c++17"] + build_flags + shared_lib_flags \
                     + import_flags + warning_flags + out_file_flag + source_files + linked_libs
 
         if verbose:
@@ -97,6 +115,9 @@ def _compile_rpp_file(source_files: List[str], out_dir: Path,
         return f"Error during compilation of class '{class_name}'" \
             + f" in file '{source_file}'.\nCommand: {full_command}" \
             + f"\nError: {str(e)}\n{e.stderr.decode('utf-8')}", compile_cmd, out_file_path
+    if as_shared_lib:
+        (out_dir / f"{class_name}.build.json").write_text(
+            json.dumps({"build_type": build_type}), encoding="utf-8")
     return None, compile_cmd, out_file_path
 
 
@@ -107,7 +128,8 @@ def _get_common_cpp_linker_flags() -> List[str]:
 
 def compile_cpp_plugin_type(source_file:str, plugin_type_info: PluginTypeInfo,
         out_dir: Path, suppress_warnings: bool = True,
-        print_to_console: bool = False, verbose: bool = False) -> Tuple[Optional[str], List[str], Path]:
+        print_to_console: bool = False, verbose: bool = False,
+        build_type: Optional[str] = None) -> Tuple[Optional[str], List[str], Path]:
 
     info = plugin_type_info.info
     class_name = info.get("ClassName")
@@ -141,13 +163,15 @@ def compile_cpp_plugin_type(source_file:str, plugin_type_info: PluginTypeInfo,
         class_name=class_name,
         suppress_warnings=suppress_warnings,
         print_to_console=print_to_console,
-        verbose=verbose
+        verbose=verbose,
+        build_type=build_type
     )
 
 def compile_cpp_plugin(source_file: PluginInfo,
         library_name: str, plugin_type_name: str, plugin_type_library: str,
         out_dir: Path, class_name: str = None, suppress_warnings: bool = True,
-        print_to_console: bool = False, verbose: bool = False) -> Tuple[Optional[str], List[str], Path]:
+        print_to_console: bool = False, verbose: bool = False,
+        build_type: Optional[str] = None) -> Tuple[Optional[str], List[str], Path]:
     if class_name is None:
         class_name = Path(source_file).stem
     wrapped = wrap_cpp_source_to_plugin_structure(source_file,
@@ -170,8 +194,27 @@ def compile_cpp_plugin(source_file: PluginInfo,
         linked_libs=linked_libs,
         suppress_warnings=suppress_warnings,
         print_to_console=print_to_console,
-        verbose=verbose
+        verbose=verbose,
+        build_type=build_type
     )
+
+def validation_build_type() -> str:
+    # GDB reads type information from the plugin, even for a Release install.
+    requested = get_setting("CPP_BUILD_TYPE")
+    if requested not in {"Debug", "Release", "RelWithDebInfo"}:
+        raise ValueError("CPP_BUILD_TYPE must be Debug, Release, or RelWithDebInfo")
+    return "Debug" if requested == "Release" else requested
+
+
+def _has_compiled_profile(directory: Path, class_name: str, build_type: str) -> bool:
+    try:
+        profile = json.loads((directory / f"{class_name}.build.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(profile, dict) and
+            (directory / f"{class_name}.so").is_file() and
+            profile.get("build_type") == build_type)
+
 
 def register_cpp_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
     """
@@ -185,7 +228,8 @@ def register_cpp_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
     class_name = description.get("ClassName")
     library = description.get("Library")
     tmp_out_dir = get_tmp_dir_for_compilation(source_file, class_name)
-    if not tmp_out_dir.exists():
+    validation_profile = validation_build_type()
+    if not _has_compiled_profile(tmp_out_dir, class_name, validation_profile):
         tmp_out_dir.mkdir(parents=True, exist_ok=True)
         plugin_type_library = plugin_info.validation_data.plugin_type_library
         plugin_type = plugin_info.validation_data.plugin_type
@@ -196,7 +240,8 @@ def register_cpp_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
             plugin_type_name=plugin_type,
             out_dir=tmp_out_dir,
             class_name=class_name,
-            suppress_warnings=True
+            suppress_warnings=True,
+            build_type=validation_profile
         )
         if compile_error:
             raise RuntimeError(f"Failed to compile C++ plugin '{class_name}' from source file '{source_file}'.\n"
@@ -207,6 +252,20 @@ def register_cpp_plugin(plugin_info: PluginInfo) -> PluginRegistrationResult:
     dest_path = shared_libs_path / f"{class_name}.so"
     shared_lib_path = tmp_out_dir / f"{class_name}.so"
     metadata = extract_plugin_metadata(shared_lib_path, class_name)
+    # Debug and RelWithDebInfo already have usable symbols and can be reused.
+    # Release needs a separate final build after metadata extraction.
+    if get_setting("CPP_BUILD_TYPE") == "Release":
+        compile_error, compile_cmd, _ = compile_cpp_plugin(
+            source_file=source_file,
+            library_name=library,
+            plugin_type_library=plugin_info.validation_data.plugin_type_library,
+            plugin_type_name=plugin_info.validation_data.plugin_type,
+            out_dir=tmp_out_dir,
+            class_name=class_name,
+            build_type="Release",
+        )
+        if compile_error:
+            raise RuntimeError(f"Failed to compile optimized plugin '{class_name}': {compile_error}")
     shutil.move(shared_lib_path, dest_path)
 
     if tmp_out_dir.exists():
@@ -255,13 +314,16 @@ def generate_cpp_plugin_interface(plugin_type_info: PluginTypeInfo) -> None:
     lib_name = description.get("Library")
     hpp_source_file = get_app_interfaces_path() / "cpp" / "rpp_plugin_types" / lib_name / f"{class_name}.hpp"
     tmp_out_dir = get_tmp_dir_for_compilation(hpp_source_file, class_name)
-    if not tmp_out_dir.exists():
+    validation_build_type()  # Validate the requested setting before compilation.
+    registration_profile = get_setting("CPP_BUILD_TYPE")
+    if not _has_compiled_profile(tmp_out_dir, class_name, registration_profile):
         tmp_out_dir.mkdir(parents=True, exist_ok=True)
         compile_error, compile_cmd, _ = compile_cpp_plugin_type(
             source_file=hpp_source_file,
             plugin_type_info=plugin_type_info,
             out_dir=tmp_out_dir,
-            suppress_warnings=True
+            suppress_warnings=True,
+            build_type=registration_profile
         )
         if compile_error:
             shutil.rmtree(str(tmp_out_dir))
@@ -325,7 +387,8 @@ def get_cpp_plugin_info_string_from_debug_symbols(
         linked_libs=[f"-L{shared_lib_path.parent}", f"-l:{shared_lib_path.name}"],
         class_name=f"dummy_{class_name}",
         suppress_warnings=True,
-        as_shared_lib=False
+        as_shared_lib=False,
+        build_type="Debug"
     )
 
     gdb_source_file = path / f"gdb_analyze_{class_name}.gdb"

@@ -9,6 +9,7 @@ from rpp_plugin_registrator.plugin_descriptors.core import (
 )
 from ..plugin_registrator.cpp import (
     compile_cpp_plugin,
+    validation_build_type,
     get_tmp_dir_for_compilation
 )
 
@@ -85,7 +86,8 @@ def validate_cpp_plugin(desc: PluginInfo, plugin_types: Dict[str, PluginTypeInfo
             plugin_type_library=plugin_type_info.get("Library"),
             out_dir=tmp_out_dir,
             class_name=class_name,
-            suppress_warnings=suppress_warnings
+            suppress_warnings=suppress_warnings,
+            build_type=validation_build_type()
         )
         if compile_error:
             if tmp_out_dir.exists():

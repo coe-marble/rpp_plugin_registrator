@@ -12,6 +12,7 @@ RPP_HOME = Path(
 INITIALIZED_MARKER_FILENAME = ".initialized"
 USE_ROS2_COMPILATION = False
 RPP_CPP_CORE_PATH = None
+CPP_BUILD_TYPE = "RelWithDebInfo"
 
 LIBRARY_PACKAGE_FILENAME = "package.json"
 LIBRARY_PLUGINS_FILENAME = "plugins.json"
@@ -147,5 +148,6 @@ def set_defaults() -> None:
     __INIT_SET["settings"] = {
         "USE_ROS2_COMPILATION": USE_ROS2_COMPILATION,
         "RPP_CPP_CORE_PATH": RPP_CPP_CORE_PATH,
+        "CPP_BUILD_TYPE": CPP_BUILD_TYPE,
     }
 reset_module()
