@@ -31,7 +31,9 @@ def get_plugin_type_shared_library_flags(
     so_path = registry_path / \
         get_plugin_type_shared_library_path(lib_name, class_name)
 
-    return [f"-L{so_path.parent}", f"-l:{so_path.name}"]
+    # -L finds the plugin type while linking. dlopen also needs its directory
+    # at runtime, both during GDB metadata extraction and after registration.
+    return [f"-L{so_path.parent}", f"-Wl,-rpath,{so_path.parent}", f"-l:{so_path.name}"]
 
 
 
