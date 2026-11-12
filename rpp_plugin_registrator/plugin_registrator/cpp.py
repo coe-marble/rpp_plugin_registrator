@@ -255,8 +255,12 @@ def generate_cpp_plugin_interface(plugin_type_info: PluginTypeInfo) -> None:
     lib_name = description.get("Library")
     hpp_source_file = get_app_interfaces_path() / "cpp" / "rpp_plugin_types" / lib_name / f"{class_name}.hpp"
     tmp_out_dir = get_tmp_dir_for_compilation(hpp_source_file, class_name)
-    if not tmp_out_dir.exists():
-        tmp_out_dir.mkdir(parents=True, exist_ok=True)
+    # A folder left behind by an interrupted registration holds no usable
+    # shared library, so the compile always starts from an empty folder.
+    if tmp_out_dir.exists():
+        shutil.rmtree(str(tmp_out_dir))
+    tmp_out_dir.mkdir(parents=True)
+    try:
         compile_error, compile_cmd, _ = compile_cpp_plugin_type(
             source_file=hpp_source_file,
             plugin_type_info=plugin_type_info,
@@ -264,16 +268,14 @@ def generate_cpp_plugin_interface(plugin_type_info: PluginTypeInfo) -> None:
             suppress_warnings=True
         )
         if compile_error:
-            shutil.rmtree(str(tmp_out_dir))
             raise RuntimeError(
                 f"Failed to compile C++ plugin '{class_name}'.\n"
                     + f"Error: {compile_error}")
 
-    dest_path = get_cpp_shared_libraries_path(description["Library"], is_plugin=False)
-    shutil.move(tmp_out_dir / f"{class_name}.so", dest_path / f"{class_name}.so")
-
-    if tmp_out_dir.exists():
-        shutil.rmtree(str(tmp_out_dir))
+        dest_path = get_cpp_shared_libraries_path(description["Library"], is_plugin=False)
+        shutil.move(tmp_out_dir / f"{class_name}.so", dest_path / f"{class_name}.so")
+    finally:
+        shutil.rmtree(str(tmp_out_dir), ignore_errors=True)
 
 def remove_cpp_plugin_interface(plugin_type_info: PluginTypeInfo) -> None:
     """
