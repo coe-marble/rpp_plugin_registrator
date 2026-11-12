@@ -17,8 +17,9 @@ void keep_symbols_alive() {{
 
 int main() {{
     void* handle = dlopen("{plugin_source_file}", RTLD_NOW | RTLD_GLOBAL);
+    const char* load_error = handle ? nullptr : dlerror();
     if (!handle) {{
-        std::cerr << "Failed to load plugin: " << dlerror() << std::endl;
+        std::cerr << "Failed to load plugin: " << load_error << std::endl;
         return 1;
     }}
     std::cout << "Plugin successfully mapped into RAM with complete C++ environment!" << std::endl;

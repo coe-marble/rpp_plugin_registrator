@@ -7,6 +7,9 @@ import gdb, re, json
 # 1. Start the program and set a breakpoint at main
 gdb.execute("tbreak main")
 gdb.execute("run")
+# Execute dlopen and capture dlerror before inspecting the result. Reading the
+# saved string avoids calling inferior functions from GDB or clearing dlerror.
+gdb.execute("next")
 gdb.execute("next")
 
 so_path = "{so_path}"
@@ -265,7 +268,9 @@ def parse_plugin_source(symbol):
 
 try:
     if int(gdb.parse_and_eval("handle")) == 0:
-        raise RuntimeError("The dummy executable could not load the plugin shared library")
+        loader_error = gdb.parse_and_eval("load_error")
+        detail = loader_error.string() if int(loader_error) != 0 else "dlerror returned no details"
+        raise RuntimeError("The dummy executable could not load the plugin shared library: " + detail)
     gdb.execute("sharedlibrary")
     # 3. Configuration of better output formatting (GDB now has vectors and maps in memory!)
 

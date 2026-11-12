@@ -422,6 +422,8 @@ def get_cpp_plugin_info_string_from_debug_symbols(
                 f"GDB analysis failed for plugin class '{class_name}' "
                  + f"in shared library '{shared_lib_path}': {result.stderr.decode()}")
         output = result.stdout.decode()
+        if result.stderr:
+            output += "\n" + result.stderr.decode()
     except Exception as e:
         full_command = " ".join(gdb_cmd)
         raise RuntimeError(

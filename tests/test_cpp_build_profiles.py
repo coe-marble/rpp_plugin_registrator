@@ -75,3 +75,18 @@ def test_registration_reuses_symbol_rich_builds_and_recompiles_release(
 def test_directory_without_profile_is_not_reused(tmp_path):
     (tmp_path / "Example.so").write_text("old binary")
     assert not cpp._has_compiled_profile(tmp_path, "Example", "RelWithDebInfo")
+
+
+def test_metadata_failure_preserves_loader_diagnostics_from_gdb_stderr(monkeypatch, tmp_path):
+    monkeypatch.setattr(cpp, "get_tmp_dir_for_compilation", lambda *args: tmp_path)
+    monkeypatch.setattr(cpp, "get_setting", lambda name: None)
+    monkeypatch.setattr(cpp, "_compile_rpp_file",
+        Mock(return_value=(None, [], tmp_path / "dummy_Example.out")))
+    diagnostic = "libexample.so: cannot open shared object file: No such file or directory"
+    monkeypatch.setattr(cpp.subprocess, "run", Mock(return_value=SimpleNamespace(
+        returncode=0,
+        stdout=b"[ERROR DURING GDB ANALYSIS]: The dummy executable could not load the plugin shared library",
+        stderr=diagnostic.encode(),
+    )))
+    with pytest.raises(RuntimeError, match="libexample.so: cannot open shared object file"):
+        cpp.extract_plugin_metadata(tmp_path / "Example.so", "Example")
