@@ -205,9 +205,16 @@ class LibraryManager:
                     plugins[data["Library"]] = pt_dict
         return plugins
 
+    @staticmethod
+    def _is_bare_library_name(lib_name):
+        """A name without a path separator that does not start with a dot."""
+        return isinstance(lib_name, str) and not lib_name.startswith('.') \
+            and os.path.basename(lib_name) == lib_name
+
     def get_library_path(self, lib_name):
         """Get the path to a library by name."""
-        if self.is_valid_plugin_library(lib_name):
+        if not self._is_bare_library_name(lib_name) \
+                and self.is_valid_plugin_library(lib_name):
             return str(Path(lib_name).resolve())
 
         reg = rp.get_app_libraries_path()
@@ -226,6 +233,8 @@ class LibraryManager:
                 s = load_json5(Path(full_path))
                 lib = s['Path']
                 return lib
+        if self.is_valid_plugin_library(lib_name):
+            return str(Path(lib_name).resolve())
         return None
 
 
@@ -385,7 +394,8 @@ class LibraryManager:
     def get_library_info(self, lib_name_or_path, only_registered=True):
         """Get library metadata information."""
         if only_registered:
-            if self.is_valid_plugin_library(lib_name_or_path):
+            if not self._is_bare_library_name(lib_name_or_path) \
+                    and self.is_valid_plugin_library(lib_name_or_path):
                 path = lib_name_or_path
             else:
                 path = self.get_library_path(lib_name_or_path)
