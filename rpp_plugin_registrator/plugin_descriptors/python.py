@@ -72,16 +72,10 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> ParsePlu
     methods: List[Dict[str, Any]] = []
     plugin_name: Optional[str] = None
 
-    is_casadi = False
     for item in plugin_class.body:
         if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         if item.name.startswith("_") or item.name.endswith("_"):
-            continue
-
-        if item.name == "casadi_plugin__":
-            if isinstance(item.value, ast.Constant) and item.value.value is True:
-                is_casadi = True
             continue
 
         params: List[Dict[str, Any]] = []
@@ -107,7 +101,6 @@ def parse_python_plugin(source_file: Path, plugin_id: Optional[str]) -> ParsePlu
         base_class_name=plugin_base_names[0] if plugin_base_names else None,
         base_classes=plugin_base_names,
         description="No description provided.",
-        is_casadi=is_casadi,
     )
 
     desc = {

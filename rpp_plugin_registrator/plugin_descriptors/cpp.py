@@ -229,7 +229,6 @@ def parse_cpp_plugin(source_file: Path, plugin_id: Optional[str]) -> ParsePlugin
         base_class_name=selected_class["BaseClassNames"][0] if selected_class["BaseClassNames"] else None,
         base_classes=selected_class["BaseClassNames"],
         description="No description provided.",
-        is_casadi=False,
     )
 
     plugin_info: Dict[str, Any] = {
@@ -241,7 +240,6 @@ def parse_cpp_plugin(source_file: Path, plugin_id: Optional[str]) -> ParsePlugin
         "UsingNamespaces": using_namespaces,
         "TypeAliases": type_aliases,
         "Description": "No description provided.",
-        "IsCasadi": False,
     }
 
     return ParsePluginResult(

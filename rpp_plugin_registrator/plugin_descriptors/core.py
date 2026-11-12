@@ -294,7 +294,6 @@ def build_base_plugin_description(
     base_class_name: Optional[str],
     base_classes: Optional[List[str]],
     description: str,
-    is_casadi: bool = False,
 ) -> Dict[str, Any]:
 
     return {
@@ -306,7 +305,6 @@ def build_base_plugin_description(
         "BaseClassName": base_class_name,
         "BaseClasses": base_classes,
         "Description": description,
-        "IsCasadi": is_casadi,
     }
 
 def apply_library_context_to_plugin(plugin_info: Dict[str, Any], library: str) -> Dict[str, Any]:

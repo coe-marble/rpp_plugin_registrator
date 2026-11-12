@@ -62,8 +62,6 @@ def build_plugin_info_payload(
     source_language: str = "unknown",
     source_file: str = "",
     description: str = "No description provided.",
-    is_casadi: bool = False,
-
 ) -> Dict[str, Any]:
     return {
         "Name": name,
@@ -71,7 +69,6 @@ def build_plugin_info_payload(
         "Library": library,
         "Description": description,
         "SourceFile": source_file,
-        "IsCasadi": is_casadi,
         "SourceLanguage": source_language,
     }
 
@@ -120,7 +117,6 @@ def build_library_manifest_plugin_entry(
         "Library": plugin["Library"],
         "Description": plugin["Description"],
         "SourceFile": plugin["SourceFile"],
-        "IsCasadi": plugin["IsCasadi"],
         "SourceLanguage": plugin["SourceLanguage"],
     }
     if plugin.get("BuildType") is not None:
@@ -149,7 +145,6 @@ def build_registry_plugin_entry(info: Dict[str, Any]) -> Dict[str, Any]:
         "Library": info.get("Library"),
         "Description": info.get("Description"),
         "SourceFile": info.get("SourceFile"),
-        "IsCasadi": info.get("IsCasadi"),
         "SourceLanguage": info.get("SourceLanguage"),
     }
 

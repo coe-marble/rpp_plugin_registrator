@@ -670,7 +670,6 @@ class LibraryManager:
             rel_path = rel_path[1:]
 
         description = desc.get("Description", "No description provided.")
-        is_casadi = bool(desc.get("IsCasadi", False))
 
         validation_data = plugin_info.validation_data
         build_type = plugin_info.build_type
@@ -682,7 +681,6 @@ class LibraryManager:
             source_language=desc["SourceLanguage"],
             description=description,
             library=lib_name,
-            is_casadi=is_casadi,
         )
 
         if validation_data is not None:
