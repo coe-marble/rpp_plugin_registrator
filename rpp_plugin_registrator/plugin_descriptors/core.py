@@ -9,6 +9,24 @@ from rpp_common.parameter_description import ParameterDescription
 
 from ..utils import to_snake_case
 
+# Names the generated adapters and the plugin base classes define themselves.
+# A plugin type method with one of these names would collide with them.
+RESERVED_METHOD_NAMES = frozenset({
+    # Plugin base class (rpp_py.plugin.Plugin) and the generated C++ client
+    "reset", "configure", "cleanup", "activate_state", "deactivate_state",
+    "on_configure", "on_cleanup", "on_activate", "on_deactivate",
+    # Generated client adapters (C++ and Python)
+    "configure_adapter_client__", "connect_adapter_client__",
+    "get_info_adapter_client__", "disconnect_adapter_client__",
+    "connect_adapter_client_async", "disconnect_adapter_client_async",
+    # Generated server adapters (C++ and Python)
+    "configure_adapter_server__", "create_capability_adapter_server__",
+    "start_adapter_server__", "close_adapter_server__", "stop_adapter_server__",
+    "handle_connection_adapter_server__", "get_info_adapter_server__",
+    # Lifecycle state codec of the generated adapters
+    "decode_lifecycle_state__", "encode_lifecycle_state__",
+})
+
 
 @dataclass(frozen=True)
 class TypeInfo:

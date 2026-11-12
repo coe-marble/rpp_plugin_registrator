@@ -7,6 +7,7 @@ import os
 
 from rpp_plugin_registrator.plugin_descriptors.core import (
     ParsePluginTypeData,
+    RESERVED_METHOD_NAMES,
     PluginTypeInfo,
     PluginTypeValidationResult, \
     apply_library_context_to_plugin_type,
@@ -332,6 +333,13 @@ def register_plugin_type_from_source(source_file: Path,
         if whitelist_plugins is not None \
                 and f"{library}::{plugin_desc.plugin_name}" not in whitelist_plugins:
             continue  # Skip this plugin type if it's not in the whitelist
+
+        for method in interface.methods:
+            if method.name in RESERVED_METHOD_NAMES:
+                raise ValueError(
+                    f"Method '{method.name}' of plugin type '{library}::{plugin_desc.plugin_name}' "
+                    f"in file '{source_path}' is reserved by the generated adapters and "
+                    "the plugin base class. Rename the method.")
 
         info = build_plugin_type_info_payload(plugin_desc, interface, source_path)
         apply_library_context_to_plugin_type(info, library)
