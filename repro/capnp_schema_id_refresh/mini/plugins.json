@@ -1,0 +1,3 @@
+{"Library":"mini","Plugins":[],"PluginTypes":[
+ {"Name":"a","Path":"mini/plugin_types/a_model.capnp","Type":"file"},
+ {"Name":"b","Path":"mini/plugin_types/b_model.capnp","Type":"file"}]}
