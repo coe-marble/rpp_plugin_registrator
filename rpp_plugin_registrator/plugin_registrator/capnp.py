@@ -65,7 +65,15 @@ def register_capnp_plugin_type(
     # Overwrite the source file id
     source_text = source_file_path.read_text(encoding="utf-8")
 
-    source_text_override, new_id = overwrite_capnp_schema_id(source_text)
+    # The generated sources of a schema that imports this file refer to its
+    # schema id. A new id would leave them pointing at a schema that no longer
+    # exists, so a file that is registered again keeps the id it already has.
+    registered_id = None
+    if destination_file_path.exists():
+        registered_id = int(read_capnp_schema_id(
+            destination_file_path.read_text(encoding="utf-8")), 16)
+    source_text_override, new_id = overwrite_capnp_schema_id(
+        source_text, registered_id)
 
     source_text_override = set_capnp_to_namespace(
             source_text_override, new_id, f"schema::{info.get('Library')}")
