@@ -157,25 +157,35 @@ def generate_methods_for_foreign_language_adapter_client(methods: list) -> str:
 
         param_setters = "\n".join(param_setters)
         result_getters = []
+        borrowed_results = any(
+            result["Type"]["Kind"] in ("struct", "list")
+            or (result["Type"]["Kind"] == "primitive" and result["Type"]["Name"] == "data")
+            for result in method["Results"])
         if return_type == "void":
             response_handling = f"{indent}request.send().wait(io.waitScope);\n"
         else:
             response_handling = f"{indent}auto response = request.send().wait(io.waitScope);\n"
+        if borrowed_results:
+            response_handling += (
+                f"{indent}auto response_owner = executor_->get().retain(std::move(response));\n")
+        response_access = "response_owner->" if borrowed_results else "response."
         for result in method["Results"]:
-            type_name = parse_type_name_from_type_info(result["Type"])
-            if result["Type"]["Kind"] == "struct":
-                result_getters.append(f"{type_name}::Const(response.get{adapt_capnp_field_name(result['Name'])}())")
-            elif result["Type"]["Kind"] == "list":
-                element_type_name = parse_type_name_from_type_info(result["Type"]["ElementType"])
-                if result["Type"]["ElementType"]["Kind"] == "struct":
-                    element_type_name += "::Const"
-                response_handling += f'''
-{indent}auto {result['Name']} = response.get{adapt_capnp_field_name(result['Name'])}();
-
-'''
-                result_getters.append(f"{result['Name']}")
+            result_type = result["Type"]
+            reader = f"{response_access}get{adapt_capnp_field_name(result['Name'])}()"
+            if result_type["Kind"] == "struct":
+                type_name = parse_type_name_from_type_info(result_type)
+                result_getters.append(f"{type_name}::Const({reader}, response_owner)")
+            elif result_type["Kind"] == "list":
+                element_type_name = parse_type_name_from_type_info(result_type["ElementType"])
+                if result_type["ElementType"]["Kind"] == "struct":
+                    wrapper = f"{element_type_name}::Const::List"
+                else:
+                    wrapper = f"rpp::ListConst<{element_type_name}>"
+                result_getters.append(f"{wrapper}({reader}, response_owner)")
+            elif result_type["Kind"] == "primitive" and result_type["Name"] == "data":
+                result_getters.append(f"rpp::DataConst({reader}, response_owner)")
             else:
-                result_getters.append(f"response.get{adapt_capnp_field_name(result['Name'])}()")
+                result_getters.append(reader)
         response_handling += (
             f'{indent}RPP_LOG_DEBUG(*logger_, '
             f'"Component call completed: component=%s method={method_name}.", '
@@ -186,7 +196,9 @@ def generate_methods_for_foreign_language_adapter_client(methods: list) -> str:
         elif len(method["Results"]) > 1:
             response_handling += f"        return std::make_tuple({', '.join(result_getters)});"
         direct_response_handling = response_handling.replace(
-            "io.waitScope", "io_->waitScope")
+            "io.waitScope", "io_->waitScope").replace(
+                "executor_->get().retain(std::move(response))",
+                "std::make_shared<decltype(response)>(std::move(response))")
         if return_type == "void":
             direct_response_handling += f"{indent}return;"
 
@@ -590,9 +602,11 @@ public:
         private:
             schema::{lib_name}::{struct_name}::Reader reader_;
             std::unique_ptr<capnp::MallocMessageBuilder> orphaned_msg_builder_;
+            std::shared_ptr<void> message_lifetime_;
         public:
-            Const(schema::{lib_name}::{struct_name}::Reader reader)
-            : reader_(reader) {{}}
+            Const(schema::{lib_name}::{struct_name}::Reader reader,
+                  std::shared_ptr<void> lifetime = nullptr)
+            : reader_(reader), message_lifetime_(std::move(lifetime)) {{}}
             virtual ~Const() = default;
             Const(const {struct_name}& main_wrapper);
             Const({struct_name}&& main_wrapper)
@@ -601,12 +615,14 @@ public:
 
             Const(Const&& other) noexcept
             : reader_(other.reader_),
-              orphaned_msg_builder_(std::move(other.orphaned_msg_builder_)) {{}}
+              orphaned_msg_builder_(std::move(other.orphaned_msg_builder_)),
+              message_lifetime_(std::move(other.message_lifetime_)) {{}}
 
             Const& operator=(Const&& other) noexcept {{
                 if (this != &other) {{
                     reader_ = other.reader_;
                     orphaned_msg_builder_ = std::move(other.orphaned_msg_builder_);
+                    message_lifetime_ = std::move(other.message_lifetime_);
                 }}
                 return *this;
             }}
@@ -616,7 +632,7 @@ public:
 
             operator schema::{lib_name}::{struct_name}::Reader() const {{ return reader_; }}
             Const shallow_copy() const {{
-                return Const(this->reader_);
+                return Const(this->reader_, this->message_lifetime_);
             }}
             static Const from_wire(schema::{lib_name}::{struct_name}::Reader reader) {{
                 auto message = std::make_unique<capnp::MallocMessageBuilder>();
@@ -637,7 +653,7 @@ public:
             field_name_pascal = to_pascal_case(field_name)
             if field.type.kind == "struct":
                 content += f'''
-            inline {field_type}::Const {field_name}() const {{ return {field_type}::Const(reader_.get{field_name_pascal}()); }}\n
+            inline {field_type}::Const {field_name}() const {{ return {field_type}::Const(reader_.get{field_name_pascal}(), message_lifetime_); }}\n
 '''
             elif field.type.kind == "list":
                 element_type = parse_type_name_from_type_info(field.type.element_type, lib_name=lib_name, fully_qualified=True)
@@ -646,13 +662,13 @@ public:
                 else:
                     list_type = f"rpp::ListConst<{element_type}>"
                 content += f'''
-            inline {list_type} {field_name}() const {{ return {list_type}{{reader_.get{field_name_pascal}()}}; }}\n
+            inline {list_type} {field_name}() const {{ return {list_type}{{reader_.get{field_name_pascal}(), message_lifetime_}}; }}\n
 '''
             else:
                 if field_type == "rpp::Data":
                     content += f'''
             inline rpp::DataConst {field_name}() const {{
-                return rpp::DataConst(reader_.get{field_name_pascal}());
+                return rpp::DataConst(reader_.get{field_name_pascal}(), message_lifetime_);
             }}\n
 '''
                 else:
