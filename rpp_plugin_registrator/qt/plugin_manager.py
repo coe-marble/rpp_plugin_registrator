@@ -714,12 +714,15 @@ class RPPPluginManager(QMainWindow):
     def open_plugin_file(self, plugin):
         path = plugin.get('SourceFile', "")
         lib_path = self.lib_manager.get_library_path(plugin.get('Library', ""))
+        if not path or lib_path is None:
+            QMessageBox.warning(self, "Cannot open plugin", "Plugin source or library path not found.")
+            return
         if plugin["SourceLanguage"] == 'slx':
             path = path.split(':')[0]
             self.log(f"Cannot open Simulink plugin file '{path}' from here. " \
             "Please open it from MATLAB.")
             return
-        open_file_in_editor(Path(lib_path) / path)
+        open_file_in_editor(Path(lib_path) / path, parent=self)
 
     def open_context(self):
         lib = self.get_active_library()
@@ -735,9 +738,9 @@ class RPPPluginManager(QMainWindow):
 
         l = next((l for l in self.libraries if l['Name'] == lib), None)
         # open folder in file explorer, for all os
-        path = l.get('Path', None)
+        path = l.get('Path') if l is not None else None
         if path is not None and self.lib_manager.is_valid_plugin_library(path):
-            open_folder(path)
+            open_folder(path, parent=self)
         else:
             QMessageBox.warning(self, "Warning", "Library path not found.")
 
@@ -833,7 +836,7 @@ class RPPPluginManager(QMainWindow):
             return
         source_file = plugin_type.get("SourceFile", None)
         if source_file is not None:
-            open_file_in_editor(source_file)
+            open_file_in_editor(source_file, parent=self)
         else:
             QMessageBox.warning(self, "Warning", "Library path not found.")
 
